@@ -122,6 +122,13 @@ const MODEL = process.env.JARVIS_MODEL ?? 'claude-opus-5'
 const EFFORT = process.env.JARVIS_EFFORT ?? 'high'
 
 /**
+ * Reasoning effort is a Claude Code concept. Gateways like OpenRouter expose
+ * non-Claude models that reject the parameter, so only send it when running
+ * a real Claude model through Anthropic.
+ */
+const INCLUDE_EFFORT = !process.env.ANTHROPIC_BASE_URL
+
+/**
  * Both spellings of every renamed built-in are listed on purpose. The SDK
  * presents several tools to the model under newer names — Task is Agent,
  * BashOutput is TaskOutput, KillShell is TaskStop, and the MCP resource tools
@@ -687,6 +694,26 @@ const handleRequest = async (req, res) => {
     return res.end(JSON.stringify({ ok: true, tts: eleven, stt: eleven }))
   }
 
+  if (req.method === 'GET' && req.url === '/quota') {
+    // What is left of the brain's daily budget, when the brain is the local
+    // OpenRouter proxy (it reads the x-ratelimit-* headers OpenRouter stamps
+    // on every response). A Claude Code login has no such notion and the
+    // proxy may not be running at all — in both cases the answer is just
+    // `null`, and the HUD omits the readout rather than guessing.
+    let body = null
+    try {
+      const base = process.env.ANTHROPIC_BASE_URL
+      if (base) {
+        const res = await fetch(`${base}/quota`, { signal: AbortSignal.timeout(3000) })
+        if (res.ok) body = await res.json()
+      }
+    } catch {
+      // proxy not running — stays null
+    }
+    res.writeHead(200, { ...cors, 'content-type': 'application/json' })
+    return res.end(JSON.stringify(body))
+  }
+
   // Serve local image files to the page. Screenshots and generated art land on
   // disk as absolute paths, and a page served over http can't read file:// —
   // so the bridge, which can, hands them over.
@@ -1245,7 +1272,7 @@ wss.on('connection', (socket) => {
       // the settings files `settingSources: []` deliberately stops loading, so
       // without this line nothing in the project has a say at all.
       model: MODEL,
-      effort: EFFORT,
+      ...(INCLUDE_EFFORT ? { effort: EFFORT } : {}),
       maxTurns: 24,
       permissionMode: 'default',
       // Without this the SDK only emits whole assistant messages, and JARVIS
@@ -1343,11 +1370,31 @@ wss.on('connection', (socket) => {
             // nothing to say — the HUD stops spinning and JARVIS stands there
             // silent. Say what happened instead.
             if (msg.subtype === 'success') {
-              sendTurn({
-                type: 'done',
-                text: msg.result ?? '',
-                costUsd: msg.total_cost_usd ?? null,
-              })
+              const result = typeof msg.result === 'string' ? msg.result : ''
+              /**
+               * Some fatal conditions arrive disguised as a SUCCESSFUL turn
+               * whose entire result is the complaint — measured on this
+               * machine, a missing login returns `success` with the text
+               * "Not logged in · Please run /login". Sent as 'done' that
+               * string would be filed as the answer (or, before the client
+               * learned to speak unresolved text, dropped on the floor and
+               * the turn would look like it never happened). Name the
+               * problem and the fix instead.
+               */
+              if (/not logged in|please run \/login/i.test(result)) {
+                console.error('[jarvis] brain has no login — run `claude /login`, or set OPENROUTER_API_KEY in openrouter.env and restart')
+                sendTurn({
+                  type: 'error',
+                  message:
+                    'My brain has no login, sir. Run `claude /login` in a terminal — or paste an OpenRouter key into openrouter.env and restart me.',
+                })
+              } else {
+                sendTurn({
+                  type: 'done',
+                  text: result,
+                  costUsd: msg.total_cost_usd ?? null,
+                })
+              }
             } else {
               console.error(
                 `[jarvis] turn failed: ${msg.subtype}`,

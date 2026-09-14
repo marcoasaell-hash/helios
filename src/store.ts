@@ -219,6 +219,8 @@ type State = {
   turns: Turn[]
   activeTool: string | null
   error: string | null
+  /** Brain quota as reported by the OpenRouter free tier, when known. */
+  quota: { limit: number; remaining: number; reset: string | null } | null
   connected: string[]
   /** Name of the speech-synthesis voice in use, shown in the HUD. */
   voice: string
@@ -240,6 +242,11 @@ type State = {
   expandedBlade: string | null
   /** JARVIS's control over his own appearance. UI_DEFAULTS == the stock look. */
   ui: UiState
+  /** Keyboard composer: false = voice-first (Mic), true = text input open.
+   *  Voice keeps running underneath — typing never mutes the loop. */
+  composerOpen: boolean
+  /** A typed line waiting to be answered. App consumes + clears it. */
+  pendingText: { id: string; text: string } | null
 
   setVoice: (v: string) => void
   setGestures: (on: boolean) => void
@@ -257,9 +264,13 @@ type State = {
   setCaption: (c: string) => void
   setActiveTool: (t: string | null) => void
   setError: (e: string | null) => void
+  setQuota: (q: { limit: number; remaining: number; reset: string | null } | null) => void
   setConnected: (c: string[]) => void
   pushTurn: (t: Turn) => void
   appendToLastTurn: (text: string) => void
+  setComposerOpen: (open: boolean) => void
+  submitText: (text: string) => void
+  clearPendingText: () => void
 
   applyUi: (patch: UiPatch) => void
   addOrbit: (o: OrbitObject) => void
@@ -277,6 +288,7 @@ export const useStore = create<State>((set) => ({
   turns: [],
   activeTool: null,
   error: null,
+  quota: null,
   connected: [],
   voice: '',
   gestures: false,
@@ -287,6 +299,22 @@ export const useStore = create<State>((set) => ({
   expandedBlade: null,
   bootNote: '',
   ui: defaultUi(),
+  composerOpen: false,
+  pendingText: null,
+
+  setComposerOpen: (composerOpen) => set({ composerOpen }),
+  submitText: (text) => {
+    const clean = text.trim()
+    if (!clean) return
+    set({
+      pendingText: {
+        id: `txt${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`,
+        text: clean,
+      },
+      composerOpen: false,
+    })
+  },
+  clearPendingText: () => set({ pendingText: null }),
 
   setVoice: (voice) => set({ voice }),
   setGestures: (gestures) => set({ gestures }),
@@ -351,6 +379,7 @@ export const useStore = create<State>((set) => ({
   setCaption: (caption) => set({ caption }),
   setActiveTool: (activeTool) => set({ activeTool }),
   setError: (error) => set({ error }),
+  setQuota: (quota) => set({ quota }),
   setConnected: (connected) => set({ connected }),
   pushTurn: (turn) => set((s) => ({ turns: [...s.turns.slice(-40), turn] })),
   appendToLastTurn: (text) =>
