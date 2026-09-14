@@ -221,6 +221,28 @@ then the triangular arc reactor lighting up — with a start-up sound under it
 Everything is optional in bridge mode. Frontend settings live in `.env.local`
 (copy `.env.example`); bridge settings are environment variables.
 
+### Using OpenRouter instead of Claude (no subscription)
+
+The bridge talks to the Claude Agent SDK, which honours `ANTHROPIC_BASE_URL` —
+so any OpenAI-compatible gateway works. `brain-proxy.mjs` is a tiny local
+proxy for OpenRouter: the CLI asks for a model name it knows, the proxy
+rewrites it to your real target and streams the answer back.
+
+1. Copy `openrouter.env.example` to `openrouter.env`, paste your key from
+   <https://openrouter.ai/keys> and the model you want (or export
+   `OPENROUTER_API_KEY` / `OPENROUTER_MODEL` / `BRAIN_PROXY_PORT` directly).
+2. Start the proxy: `node brain-proxy.mjs`
+3. Start the bridge against it (the model name just has to be one the proxy
+   accepts — it is rewritten before forwarding):
+
+```bash
+ANTHROPIC_BASE_URL=http://127.0.0.1:8790 ANTHROPIC_API_KEY=<your-openrouter-key> JARVIS_MODEL=claude-sonnet-4-5 npm run bridge
+```
+
+The `effort` parameter is only sent when no custom base URL is set, since
+non-Claude models reject it. Leave `openrouter.env` empty and everything
+behaves exactly as before, on your Claude Code login.
+
 ### Bridge
 
 | Variable | Default | Effect |
@@ -246,16 +268,25 @@ Everything is optional in bridge mode. Frontend settings live in `.env.local`
 | `VITE_USE_ELEVENLABS` | Force the ElevenLabs voice on |
 | `VITE_ANTHROPIC_API_KEY` | Direct mode only |
 
-### Adding an ElevenLabs key
+### Adding an ElevenLabs key (better voice + sharper hearing)
 
-You do not have to touch a flag. Either:
+Optional, same as `.env.example` describes — free tier is plenty for a demo:
 
-- Set `ELEVENLABS_API_KEY` on the bridge before starting it, **or**
-- Add the key to your `elevenlabs` MCP server's env in `~/.claude.json` — the
-  bridge reads it from there too.
+1. Get a key at <https://elevenlabs.io> (profile → API keys).
+2. Give it to the bridge — either:
+   - set `ELEVENLABS_API_KEY` in the shell before starting the bridge, **or**
+   - add it to your `elevenlabs` MCP server's env in `~/.claude.json` — the
+     bridge reads it from there too, so nothing is pasted twice.
+3. Restart the bridge and reload the page. No flag to set: the bridge's
+   `/health` starts reporting `{ tts: true, stt: true }`, and the browser
+   picks it up on the next boot — speech output switches to the ElevenLabs
+   voice (`JARVIS_VOICE_ID`, default George) and transcription to Scribe.
+4. Check it worked: press **D** for diagnostics, or open
+   `http://localhost:8787/health` — both flags should read `true`.
 
-Either way, `/health` starts reporting the capability, the browser picks it up on
-the next boot, and both the voice and transcription upgrade automatically.
+Without a key everything still works on the browser's own speech, and
+`VITE_USE_ELEVENLABS=true` in `.env.local` forces the ElevenLabs path on
+once a key is available.
 
 ---
 
