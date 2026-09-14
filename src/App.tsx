@@ -191,28 +191,17 @@ export default function App() {
        * partial event. Until this existed the resolved text was dropped: no
        * transcript entry, nothing spoken, and the HUD snapped straight back
        * from thinking to listening to standby, which read exactly like an
-       * assistant that ignores you. Give such turns the same treatment a
-       * streamed one got: transcript, caption and voice.
+       * assistant that ignores you. Such turns get the same treatment a
+       * streamed one got: transcript, caption and voice. Only unstreamed
+       * turns land here — a streamed one already has its deltas in the
+       * transcript, and appending the final text would say it all twice.
        */
-      const transcript = store
-        .getState()
-        .turns.find((t) => t.id === turnId)?.text
       if (!started && text) {
         started = true
         store.getState().setPhase('speaking')
         store.getState().setActiveTool(null)
         music.working(false)
-        store.getState().pushTurn({ id: turnId, role: 'jarvis', text: '' })
-      }
-      if (started && text && transcript !== text) {
-        const last = store.getState().turns.at(-1)
-        if (!last || last.id !== turnId || last.text !== text) {
-          if (last?.id !== turnId) {
-            store.getState().pushTurn({ id: turnId, role: 'jarvis', text })
-          } else {
-            store.getState().appendToLastTurn(text)
-          }
-        }
+        store.getState().pushTurn({ id: turnId, role: 'jarvis', text })
         spk.push(text)
       }
 

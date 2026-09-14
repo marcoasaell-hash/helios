@@ -1,5 +1,13 @@
 import { create } from 'zustand'
 
+/** Brain quota + the currently serving provider, as the brain proxy reports it. */
+export type Quota = {
+  limit: number | null
+  remaining: number | null
+  reset: string | null
+  active: string | null
+}
+
 export type Phase =
   | 'offline'   // waiting for the click that unlocks audio
   | 'boot'      // startup sequence
@@ -220,7 +228,7 @@ type State = {
   activeTool: string | null
   error: string | null
   /** Brain quota + which brain is serving, as reported by the brain proxy. */
-  quota: { limit: number | null; remaining: number | null; reset: string | null; active: string | null } | null
+  quota: Quota | null
   connected: string[]
   /** Name of the speech-synthesis voice in use, shown in the HUD. */
   voice: string
@@ -264,7 +272,7 @@ type State = {
   setCaption: (c: string) => void
   setActiveTool: (t: string | null) => void
   setError: (e: string | null) => void
-  setQuota: (q: { limit: number; remaining: number; reset: string | null } | null) => void
+  setQuota: (q: Quota | null) => void
   setConnected: (c: string[]) => void
   pushTurn: (t: Turn) => void
   appendToLastTurn: (text: string) => void

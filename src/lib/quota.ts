@@ -1,5 +1,5 @@
 import { BACKEND, BRIDGE_HTTP_URL } from '../config'
-import { useStore } from '../store'
+import { useStore, type Quota } from '../store'
 
 /**
  * How much brain is left today — and which brain is answering.
@@ -17,13 +17,6 @@ import { useStore } from '../store'
  * neither quota nor a chain — or the bridge is down. The HUD simply omits the
  * readout then.
  */
-
-type Quota = {
-  limit: number | null
-  remaining: number | null
-  reset: string | null
-  active: string | null
-}
 
 let timer: number | undefined
 

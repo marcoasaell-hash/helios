@@ -1381,7 +1381,7 @@ wss.on('connection', (socket) => {
                * the turn would look like it never happened). Name the
                * problem and the fix instead.
                */
-              if (/not logged in|please run \/login/i.test(result)) {
+              if (result.length < 200 && /not logged in|please run \/login/i.test(result)) {
                 console.error('[jarvis] brain has no login — run `claude /login`, or set OPENROUTER_API_KEY in openrouter.env and restart')
                 sendTurn({
                   type: 'error',

@@ -433,7 +433,6 @@ async function callOllama(payload) {
             push({ type: 'content_block_stop', index })
             push({ type: 'message_delta', delta: { stop_reason: 'end_turn', stop_sequence: null }, usage: { output_tokens: 0 } })
             push({ type: 'message_stop' })
-            controller.close()
             return
           }
           // The whole answer is still open: close the text/thinking block.
@@ -492,12 +491,52 @@ const PROVIDERS = {
   ollama: callOllama,
 }
 
+/** Pipe a provider result back to the CLI — body is a string or a stream. The
+ *  one forwarder for every success path, so stream errors are handled (logged,
+ *  response still ends) the same way no matter which branch produced them. */
+async function forwardToClient(res, out, provider) {
+  res.writeHead(out.status, out.headers && typeof out.headers.get === 'function'
+    ? { 'content-type': out.headers.get('content-type') || 'application/json' }
+    : out.headers)
+  if (typeof out.body === 'string') {
+    res.end(out.body)
+    return
+  }
+  if (!out.body) {
+    res.end()
+    return
+  }
+  const reader = out.body.getReader()
+  let bytes = 0
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      bytes += value.length
+      if (!res.write(value)) await new Promise((r) => res.once('drain', r))
+    }
+  } catch (e) {
+    console.error('[brain-proxy] stream error:', e.message)
+  }
+  console.log(`[brain-proxy] streamed ${bytes} bytes back from ${provider}`)
+  res.end()
+}
+
 /** A 429 whose headers carry a reset time is the daily cap — remember it. */
 function noteFailure(provider, status, headers) {
   if (provider === 'openrouter' && headers) noteRatelimit(headers)
   if (status === 429) {
     const reset = provider === 'openrouter' ? ratelimit.reset : null
-    const until = reset ? Math.min(Date.parse(reset) || 0, Date.now() + 24 * 3600 * 1000) : Date.now() + 5 * 60 * 1000
+    // A reset we can read beats one we can't: if the value is missing or
+    // unparseable, cool down for 5 minutes instead of not at all — otherwise
+    // every following turn re-probes a provider that is still capped.
+    const fallback = Date.now() + 5 * 60 * 1000
+    const epoch = reset && /^\d+$/.test(reset) ? Number(reset) : NaN
+    const parsed = Number.isFinite(epoch) ? epoch : reset ? Date.parse(reset) : NaN
+    const until =
+      Number.isFinite(parsed) && parsed > Date.now()
+        ? Math.min(parsed, Date.now() + 24 * 3600 * 1000)
+        : fallback
     if (until > cooldownUntil[provider]) {
       cooldownUntil[provider] = until
       console.log(`[brain-proxy] ${provider} cooling down until ${new Date(until).toISOString()} (quota)`)
@@ -577,9 +616,13 @@ const server = http.createServer(async (req, res) => {
     // A shared secret, read from the same env file the bridge already parses,
     // closes that: only callers that can read openrouter.env may forward.
     // Off (backward compatible) until BRAIN_PROXY_SECRET is set anywhere.
+    // Compared as fixed-length sha256 digests: timingSafeEqual throws on
+    // unequal buffer lengths, and a latin1 header with any byte above 0x7F
+    // re-encodes to two UTF-8 bytes — comparing raw buffers lets a malformed
+    // header crash the process. Digests are always 32 bytes and never throw.
     if (SECRET) {
-      const got = String(req.headers['x-brain-secret'] ?? '')
-      const ok = got.length === SECRET.length && crypto.timingSafeEqual(Buffer.from(got), Buffer.from(SECRET))
+      const digest = (s) => crypto.createHash('sha256').update(s, 'utf8').digest()
+      const ok = crypto.timingSafeEqual(digest(String(req.headers['x-brain-secret'] ?? '')), digest(SECRET))
       if (!ok) {
         console.log(`[brain-proxy] rejected /messages: bad or missing x-brain-secret`)
         res.writeHead(401, { 'content-type': 'application/json' })
@@ -618,27 +661,7 @@ const server = http.createServer(async (req, res) => {
           noteRatelimit(out.headers)
           cooldownUntil.openrouter = 0
         }
-        res.writeHead(out.status, out.headers && typeof out.headers.get === 'function'
-          ? { 'content-type': out.headers.get('content-type') || 'application/json' }
-          : out.headers)
-        if (typeof out.body === 'string') {
-          res.end(out.body)
-        } else if (out.body) {
-          const reader = out.body.getReader()
-          let bytes = 0
-          try {
-            for (;;) {
-              const { done, value } = await reader.read()
-              if (done) break
-              bytes += value.length
-              if (!res.write(value)) await new Promise((r) => res.once('drain', r))
-            }
-          } catch (e) {
-            console.error('[brain-proxy] stream error:', e.message)
-          }
-          console.log(`[brain-proxy] streamed ${bytes} bytes back from ${provider}`)
-        }
-        res.end()
+        await forwardToClient(res, out, provider)
         return
       }
       last = out
@@ -650,21 +673,7 @@ const server = http.createServer(async (req, res) => {
         const second = await fn(payload)
         if (second.status >= 200 && second.status < 300) {
           console.log(`[brain-proxy] ${asked} -> ${provider} recovered on retry`)
-          res.writeHead(second.status, second.headers && typeof second.headers.get === 'function'
-            ? { 'content-type': second.headers.get('content-type') || 'application/json' }
-            : second.headers)
-          if (typeof second.body === 'string') res.end(second.body)
-          else if (second.body) {
-            const reader = second.body.getReader()
-            try {
-              for (;;) {
-                const { done, value } = await reader.read()
-                if (done) break
-                if (!res.write(value)) await new Promise((r) => res.once('drain', r))
-              }
-            } catch {}
-          }
-          res.end()
+          await forwardToClient(res, second, provider)
           return
         }
         noteFailure(provider, second.status, second.headers)

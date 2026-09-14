@@ -744,12 +744,15 @@ export function createSpeaker(): Speaker {
  * is a round trip AND another bite of the ElevenLabs character budget, for
  * bytes this page has already paid for once. Same text, same voice, same
  * settings: the mp3 is identical, so generate it once and reuse the blob.
- * Bounded, because a long session could otherwise pin dozens of URLs forever.
+ * The cache stores Blobs, not object URLs — playUrl revokes the URL it is
+ * handed once playback ends, so a stored URL would be dead on the second
+ * request. Bounded, because a long session could otherwise pin dozens of
+ * audio blobs forever.
  */
-const cloudCache = new Map<string, string>()
+const cloudCache = new Map<string, Blob>()
 const CLOUD_CACHE_MAX = 40
 
-function cachedCloudAudio(text: string): string | null {
+function cachedCloudAudio(text: string): Blob | null {
   const hit = cloudCache.get(text)
   if (!hit) return null
   // Refresh LRU position.
@@ -758,24 +761,21 @@ function cachedCloudAudio(text: string): string | null {
   return hit
 }
 
-function rememberCloudAudio(text: string, url: string): string {
+function rememberCloudAudio(text: string, blob: Blob): string {
   if (cloudCache.size >= CLOUD_CACHE_MAX) {
     const oldest = cloudCache.keys().next().value
-    if (oldest !== undefined) {
-      const stale = cloudCache.get(oldest)
-      if (stale) URL.revokeObjectURL(stale)
-      cloudCache.delete(oldest)
-    }
+    if (oldest !== undefined) cloudCache.delete(oldest)
   }
-  cloudCache.set(text, url)
-  return url
+  cloudCache.set(text, blob)
+  // A fresh URL per call: the caller plays it once and playUrl revokes it.
+  return URL.createObjectURL(blob)
 }
 
 /** Only used when USE_ELEVENLABS is on. Bridge proxy first (it already holds
  *  the key), then a direct key, then null to fall back to the native voice. */
 async function fetchCloudAudio(text: string): Promise<string | null> {
   const cached = cachedCloudAudio(text)
-  if (cached) return cached
+  if (cached) return URL.createObjectURL(cached)
   if (BACKEND === 'bridge') {
     try {
       const res = await fetch(`${BRIDGE_HTTP_URL}/tts`, {
@@ -783,7 +783,7 @@ async function fetchCloudAudio(text: string): Promise<string | null> {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ text }),
       })
-      if (res.ok) return rememberCloudAudio(text, URL.createObjectURL(await res.blob()))
+      if (res.ok) return rememberCloudAudio(text, await res.blob())
     } catch {
       /* fall through */
     }
@@ -811,7 +811,7 @@ async function fetchCloudAudio(text: string): Promise<string | null> {
           }),
         },
       )
-      if (res.ok) return rememberCloudAudio(text, URL.createObjectURL(await res.blob()))
+      if (res.ok) return rememberCloudAudio(text, await res.blob())
     } catch {
       /* fall through */
     }
