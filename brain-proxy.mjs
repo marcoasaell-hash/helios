@@ -102,12 +102,22 @@ if (PRIORITY.includes('openrouter')) {
  */
 const ratelimit = { limit: null, remaining: null, reset: null }
 function noteRatelimit(headers) {
-  const num = (v) => (v === undefined ? null : Number(v) || null)
+  // Number(0) is falsy — a spent quota reports remaining: 0 and a naive
+  // `|| null` erases exactly the number that matters most.
+  const num = (v) => {
+    if (v === undefined) return null
+    const n = Number(v)
+    return Number.isFinite(n) ? n : null
+  }
   ratelimit.limit = num(headers.get('x-ratelimit-limit')) ?? ratelimit.limit
   ratelimit.remaining = num(headers.get('x-ratelimit-remaining')) ?? ratelimit.remaining
   const resetRaw = headers.get('x-ratelimit-reset')
   if (resetRaw) {
-    const ms = Date.parse(resetRaw)
+    // OpenRouter sends epoch milliseconds here, not a date string — Date.parse
+    // on "1789430400000" is NaN and would silently disable the until-reset
+    // cooldown. Normalize both shapes to ISO.
+    const asNum = /^\d+$/.test(resetRaw.trim()) ? Number(resetRaw.trim()) : NaN
+    const ms = Number.isFinite(asNum) ? asNum : Date.parse(resetRaw)
     ratelimit.reset = Number.isNaN(ms) ? resetRaw : new Date(ms).toISOString()
   }
 }
