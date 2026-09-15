@@ -54,6 +54,9 @@ const KEY = envv('OPENROUTER_API_KEY')
 const TARGET = envv('OPENROUTER_MODEL') || 'nvidia/nemotron-3-super-120b-a12b:free'
 const OLLAMA_URL = (envv('OLLAMA_URL') || 'http://127.0.0.1:11434').replace(/\/+$/, '')
 const OLLAMA_MODEL = envv('OLLAMA_MODEL')
+// Thinking level for models that take low/medium/high instead of a boolean
+// (GPT-OSS family). Unset = send a plain boolean to thinking-capable models.
+const OLLAMA_THINK_LEVEL = envv('OLLAMA_THINK_LEVEL')
 // Priority order of the chain. "openrouter,ollama" (default): online first,
 // local standing by. Reversing it ("ollama,openrouter") makes the local model
 // primary and OpenRouter the overflow brain.
@@ -70,7 +73,8 @@ if (!Number.isInteger(PORT) || PORT < 1 || PORT > 65535) {
   console.error('[brain-proxy] BRAIN_PROXY_PORT must be an integer from 1 to 65535')
   process.exit(1)
 }
-const UPSTREAM = 'https://openrouter.ai/api/v1'
+// Override only to test the proxy against a mock upstream.
+const UPSTREAM = envv('OPENROUTER_UPSTREAM') || 'https://openrouter.ai/api/v1'
 
 // Shared secret for callers (see the /messages gate below). Generate one with
 // `node -e "console.log(require('crypto').randomBytes(24).toString('hex'))"`
@@ -135,12 +139,35 @@ const cooldownUntil = { openrouter: 0, ollama: 0 }
 const PROBE_TIMEOUT_MS = 4000
 let ollamaUp = null
 let ollamaResolvedModel = null
+/** Capabilities of the resolved model, from /api/show — read by the request
+ *  translation to decide whether a thinking config may be forwarded. */
+let ollamaModelCaps = []
+/** One /api/show lookup. Returns capabilities on success, [] on any failure
+ *  (old Ollama servers lack the endpoint; the feature then stays off). */
+async function modelCaps(name) {
+  try {
+    const res = await fetch(`${OLLAMA_URL}/api/show`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      // `model` is the current key, `name` the older one — sending both keeps
+      // this working across server versions; unknown fields are ignored.
+      body: JSON.stringify({ model: name, name }),
+      signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
+    })
+    if (!res.ok) return []
+    const info = await res.json().catch(() => null)
+    return Array.isArray(info?.capabilities) ? info.capabilities : []
+  } catch {
+    return []
+  }
+}
 async function ollamaState() {
   if (ollamaUp !== null && Date.now() - ollamaUp.at < 15000) {
     return { up: ollamaUp.up, model: ollamaResolvedModel }
   }
   let up = false
   let model = OLLAMA_MODEL || null
+  let caps = []
   try {
     const res = await fetch(`${OLLAMA_URL}/api/tags`, { signal: AbortSignal.timeout(PROBE_TIMEOUT_MS) })
     if (res.ok) {
@@ -148,13 +175,30 @@ async function ollamaState() {
       const tags = await res.json().catch(() => null)
       const models = Array.isArray(tags?.models) ? tags.models : []
       if (!model) {
-        // Prefer a model that can call tools — agent mode needs that — and
-        // otherwise take the most recently pulled one.
-        const capable = models.find((m) => (m.capabilities ?? []).includes('tools'))
-        model = (capable ?? models[0])?.model ?? null
+        // /api/tags summaries do NOT carry capabilities — the old check here
+        // always missed and fell through to models[0], which can pick a model
+        // that cannot call tools and quietly end every agent turn with plain
+        // text. Ask /api/show per candidate (bounded; nobody has hundreds) and
+        // take the first tool-capable one, exactly what the tags check meant.
+        const candidates = models.slice(0, 12).map((m) => m?.model).filter(Boolean)
+        for (const name of candidates) {
+          const c = await modelCaps(name)
+          if (c.includes('tools')) {
+            model = name
+            caps = c
+            break
+          }
+        }
+        if (!model) model = models[0]?.model ?? null
+        if (model && caps.length) console.log(`[brain-proxy] ollama auto-selected ${model} (tools)`)
       }
     }
   } catch {}
+  // Capabilities of whichever model was resolved — explicitly configured ones
+  // were never scanned above, so look them up here too. Failures leave [] and
+  // the thinking mapping stays off (the pre-fix behaviour).
+  if (up && model && !caps.length) caps = await modelCaps(model)
+  ollamaModelCaps = caps
   ollamaUp = { up, at: Date.now() }
   if (up && model) ollamaResolvedModel = model
   return { up, model: up ? ollamaResolvedModel : null }
@@ -253,6 +297,18 @@ function anthropicToOllama(payload) {
   if (tc?.type === 'any') body.tool_choice = 'required'
   else if (tc?.type === 'tool' && tc.name) body.tool_choice = { type: 'function', function: { name: tc.name } }
   // 'auto' is Ollama's default — omit.
+  //
+  // The agent SDK thinks in Anthropic configs (adaptive by default); Ollama
+  // wants its own `think` value and rejects the object as-is. Only thinking-
+  // capable models are touched at all: `think: true` against a model without
+  // the capability is a 400, and that would break every turn on it. GPT-OSS
+  // family takes a LEVEL instead of a boolean — OLLAMA_THINK_LEVEL maps that
+  // (low|medium|high) when you run one.
+  const th = payload.thinking
+  if (th && typeof th === 'object' && (ollamaModelCaps.includes('thinking') || OLLAMA_THINK_LEVEL)) {
+    if (th.type === 'disabled') body.think = false
+    else if (th.type === 'enabled' || th.type === 'adaptive') body.think = OLLAMA_THINK_LEVEL || true
+  }
   return body
 }
 
@@ -465,7 +521,14 @@ async function callOllama(payload) {
  * The OpenRouter provider: the old passthrough, wrapped in the provider
  * contract. Returns the raw upstream so the caller can inspect rate-limit
  * headers and decide on cooldowns/failover.
+ *
+ * The header wait is bounded (OPENROUTER_TIMEOUT_MS): Undici's default
+ * response-header timeout is 300s, so a silent upstream used to stall the
+ * whole provider loop — and with it the Ollama failover — for five minutes
+ * before the catch could act. The abort lands in that same catch, so the
+ * 502-and-fall-over path is unchanged, just prompt.
  */
+const OPENROUTER_TIMEOUT_MS = Number(envv('OPENROUTER_TIMEOUT_MS') || 60000)
 async function callOpenRouter(payload) {
   let upstream
   try {
@@ -479,11 +542,89 @@ async function callOpenRouter(payload) {
         'anthropic-version': '2023-06-01',
       },
       body: JSON.stringify({ ...payload, model: TARGET }),
+      signal: AbortSignal.timeout(OPENROUTER_TIMEOUT_MS),
     })
   } catch (e) {
     return { status: 502, headers: new Headers(), body: anthropicError('api_error', `proxy upstream failed: ${e.message}`) }
   }
-  return { status: upstream.status, headers: upstream.headers, body: upstream.ok && upstream.body ? upstream.body : await upstream.text().catch(() => '') }
+  if (upstream.ok && upstream.body) {
+    const verdict = await sniffOpenRouterBody(upstream.body.getReader())
+    if (!verdict.ok) {
+      // A healthy status carrying a failure. Report the real thing so the
+      // chain cools OpenRouter down and Ollama takes the turn — piping this
+      // through made the CLI read "api error" out loud as if it were an answer.
+      console.log('[brain-proxy] openrouter 200 carried an error body — failing over')
+      return { status: 502, headers: upstream.headers, body: verdict.text || anthropicError('api_error', 'upstream error behind a 200') }
+    }
+    return { status: upstream.status, headers: upstream.headers, body: recombinedBody(verdict.prefix, verdict.reader) }
+  }
+  return { status: upstream.status, headers: upstream.headers, body: await upstream.text().catch(() => '') }
+}
+
+/** An SSE line that already decides the body is an error, not an answer. */
+function sseLineHasError(line) {
+  const s = line.replace(/\r$/, '')
+  if (/^event:\s*error\b/i.test(s)) return true
+  if (!s.startsWith('data:')) return false
+  const data = s.slice(5).trim()
+  if (!data || data === '[DONE]') return false
+  try {
+    const j = JSON.parse(data)
+    return !!(j && (j.type === 'error' || j.error))
+  } catch {
+    return false // a half-delivered line stays undecidable until it completes
+  }
+}
+
+/**
+ * A 2xx from OpenRouter is not the whole truth: when the upstream provider
+ * itself chokes ("Upstream error from Nvidia: Service temporarily overloaded"),
+ * the failure arrives as a 200 whose body is an error object — or as an SSE
+ * stream that only ever yields an error event. Decide from the leading bytes
+ * so the provider loop can fail over instead of piping the failure on.
+ * Returns the consumed prefix, so a healthy body still forwards byte-exact.
+ */
+async function sniffOpenRouterBody(reader) {
+  const decoder = new TextDecoder()
+  const prefix = []
+  let buf = ''
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    prefix.push(value)
+    buf += decoder.decode(value, { stream: true })
+    const seen = buf.slice(0, buf.lastIndexOf('\n') + 1) // complete lines only
+    if (/event:\s*message_start/.test(seen)) return { ok: true, prefix, reader }
+    if (seen && seen.split('\n').some(sseLineHasError)) return { ok: false, prefix, reader, text: buf }
+    if (buf.length > 16 * 1024) return { ok: true, prefix, reader } // healthy stream, past the interesting part
+  }
+  // No SSE verdict — a plain (non-stream) JSON body, most likely. Structural
+  // check, not a substring hunt: an answer that merely contains the word
+  // "error" must pass through untouched.
+  try {
+    const j = JSON.parse(buf)
+    if (j && (j.type === 'error' || j.error)) return { ok: false, prefix, reader, text: buf }
+  } catch {}
+  return { ok: true, prefix, reader }
+}
+
+/** Rebuild a body stream: the sniffed prefix first, then everything else. */
+function recombinedBody(prefix, reader) {
+  return new ReadableStream({
+    async start(controller) {
+      for (const chunk of prefix) controller.enqueue(chunk)
+      try {
+        for (;;) {
+          const { done, value } = await reader.read()
+          if (done) break
+          controller.enqueue(value)
+        }
+        controller.close()
+      } catch (e) {
+        controller.error(e)
+      }
+    },
+  })
 }
 
 const PROVIDERS = {
@@ -657,6 +798,8 @@ const server = http.createServer(async (req, res) => {
       if (ok) {
         // OpenRouter with a 200: any leftover cooldown from a transient blip
         // can go; the provider just proved itself. Also record rate limits.
+        // (Error-behind-a-200 is already caught structurally in callOpenRouter
+        // before it ever gets here — no substring guessing at this level.)
         if (provider === 'openrouter' && out.headers) {
           noteRatelimit(out.headers)
           cooldownUntil.openrouter = 0
