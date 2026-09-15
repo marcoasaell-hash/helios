@@ -413,6 +413,21 @@ export async function renderPage(url, mode, bridgeOrigin) {
     ? rendered.replace('</body>', `${shim}</body>`)
     : rendered + shim
 
+  // Live mode injects `<base href="${page.url}">` so the publisher's relative
+  // stylesheets, fonts and images resolve back to their origin and the page
+  // looks like itself. A `base-uri 'none'` here would make the browser ignore
+  // that <base> outright — relative URLs would then resolve against the bridge
+  // (localhost) and 404, which defeats the whole mode. So permit exactly the
+  // page's own origin, and nothing else. Falls back to 'none' if the URL won't
+  // parse, which is the safe direction. Reader mode injects no <base> and its
+  // assets are absolute /img links, so it keeps the strict 'none'.
+  let liveBaseUri = "'none'"
+  try {
+    liveBaseUri = new URL(page.url).origin
+  } catch {
+    /* keep 'none' */
+  }
+
   // The framed document's own policy. The parent page's CSP does not reach in
   // here — an iframe gets its rules from its own response — so this is the only
   // thing standing between a hostile page and script execution on an origin
@@ -421,7 +436,7 @@ export async function renderPage(url, mode, bridgeOrigin) {
     ? "default-src 'none'; img-src https: http: data: blob:; " +
       "style-src 'unsafe-inline' https: http: data:; font-src https: http: data:; " +
       `media-src https: http: data:; script-src 'nonce-${nonce}'; form-action 'none'; ` +
-      "frame-src 'none'; object-src 'none'; base-uri 'none'"
+      `frame-src 'none'; object-src 'none'; base-uri ${liveBaseUri}`
     : `default-src 'none'; img-src ${bridgeOrigin} data:; ` +
       `style-src 'unsafe-inline'; script-src 'nonce-${nonce}'; form-action 'none'; ` +
       "frame-src 'none'; object-src 'none'; base-uri 'none'"
