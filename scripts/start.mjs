@@ -114,7 +114,13 @@ if (port) {
 vendorWasm()
 
 console.log('\nJ.A.R.V.I.S. starting — the brain and the face.\n')
-run('bridge', 'node', ['bridge/server.mjs'], '36', bridgeEnv)
+run(
+  'bridge',
+  'node',
+  ['--env-file-if-exists=.env.local', 'bridge/server.mjs'],
+  '36',
+  bridgeEnv,
+)
 // npm is a shell script on most systems; call the vite binary directly so we do
 // not need shell:true (which would break the argument handling above).
 run('face', process.execPath, ['node_modules/vite/bin/vite.js'], '35', {})
