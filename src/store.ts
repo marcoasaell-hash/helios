@@ -235,6 +235,10 @@ type State = {
   /** Whether the camera is on and hands are being tracked. Store-backed rather
    *  than read off the tracker, because the indicator has to re-render. */
   gestures: boolean
+  /** True while M has muted the microphone: nothing is captured or
+   *  transcribed, and the HUD says so. Typing in the composer still works —
+   *  mute takes the ears away, not the whole assistant. */
+  micMuted: boolean
   /** Set while JARVIS is taking a look, to whatever he said he was looking for.
    *  null when he is not. The camera light is on either way — this says why. */
   looking: string | null
@@ -258,6 +262,7 @@ type State = {
 
   setVoice: (v: string) => void
   setGestures: (on: boolean) => void
+  setMicMuted: (m: boolean) => void
   setLooking: (why: string | null) => void
   setBootNote: (n: string) => void
   pushPanel: (p: Panel) => void
@@ -300,6 +305,7 @@ export const useStore = create<State>((set) => ({
   connected: [],
   voice: '',
   gestures: false,
+  micMuted: false,
   looking: null,
   panels: [],
   blades: [],
@@ -326,6 +332,7 @@ export const useStore = create<State>((set) => ({
 
   setVoice: (voice) => set({ voice }),
   setGestures: (gestures) => set({ gestures }),
+  setMicMuted: (micMuted) => set({ micMuted }),
   setLooking: (looking) => set({ looking }),
   setBootNote: (bootNote) => set({ bootNote }),
   // Three is as many as fits around the reactor without crowding it. Sticky

@@ -159,6 +159,7 @@ export function Hud() {
   const voice = useStore((s) => s.voice)
   const bootNote = useStore((s) => s.bootNote)
   const gestures = useStore((s) => s.gestures)
+  const micMuted = useStore((s) => s.micMuted)
   const looking = useStore((s) => s.looking)
   const ui = useStore((s) => s.ui)
   const quota = useStore((s) => s.quota)
@@ -215,6 +216,10 @@ export function Hud() {
               {quotaLabel(quota)}
             </span>
           )}
+          {/* M is a mixing-desk mute: the shared mic track goes dead while it
+              is held. Standing next to the phase so "why isn't it hearing me"
+              answers itself before it becomes a bug report. */}
+          {micMuted && <span className="quota low">MIC MUTED</span>}
         </div>
       </header>
 
@@ -325,7 +330,7 @@ export function Hud() {
 
       <footer className="hud-bottom">
         <span className="hint">
-          say <b>“hey jarvis”</b> · <kbd>Space</kbd> to talk · <kbd>T</kbd>/<kbd>↵</kbd> type · <kbd>S</kbd> sound · <kbd>G</kbd> hands
+          say <b>“hey jarvis”</b> · <kbd>Space</kbd> to talk · <kbd>T</kbd>/<kbd>↵</kbd> type · <kbd>M</kbd> mute · <kbd>S</kbd> sound · <kbd>G</kbd> hands
           {voice && (
             <>
               {' · '}

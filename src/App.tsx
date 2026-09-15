@@ -29,7 +29,7 @@ import {
   usingBridge,
   type Msg,
 } from './lib/brain'
-import { startAnalyser, micLevel } from './lib/audio'
+import { startAnalyser, micLevel, setMicEnabled } from './lib/audio'
 import { probeCapabilities } from './lib/capabilities'
 import { startQuotaPolling } from './lib/quota'
 import { env } from './config'
@@ -257,8 +257,11 @@ export default function App() {
 
   // -- voice events ---------------------------------------------------------
 
-  /** What the voice loop should do with what it hears, derived from phase. */
+  /** What the voice loop should do with what it hears, derived from phase —
+   *  and muted overrules everything: M takes the ears away entirely, so the
+   *  recogniser goes deaf even though the phases keep moving underneath. */
   const mode = (): VoiceMode => {
+    if (store.getState().micMuted) return 'deaf'
     switch (store.getState().phase) {
       case 'offline':
       case 'boot':
@@ -729,6 +732,30 @@ export default function App() {
         return
       }
 
+      // M mutes the microphone — M again unmutes. The shared track is what
+      // actually flips (see setMicEnabled), so VAD, the reactor meter and any
+      // recording go silent in one place, and the browser recogniser fallback
+      // is silenced through mode()'s deaf override. Space still talks, and the
+      // composer still types: mute takes the ears, not the whole assistant.
+      if (
+        (e.key === 'm' || e.key === 'M') &&
+        !e.repeat &&
+        !e.metaKey &&
+        !e.ctrlKey &&
+        !e.altKey
+      ) {
+        e.preventDefault()
+        const st = store.getState()
+        if (st.phase === 'offline') return
+        const next = !st.micMuted
+        // An analyser fed by a suspended track would freeze its meter at a
+        // stale level and leave the reactor pulsing to a ghost; zero it now.
+        if (next) store.getState().setLevel(0)
+        st.setMicMuted(next)
+        setMicEnabled(!next)
+        return
+      }
+
       // S speaks a fixed line, bypassing the wake word, the recogniser and the
       // model entirely. When "I can't hear him" is the report, this is the one
       // keypress that separates a broken voice engine from a broken voice loop
@@ -826,11 +853,22 @@ export default function App() {
     }
     window.addEventListener('keydown', onKey)
 
+    // The mic lives as long as the page, and so does M's mute — but so does a
+    // browser's habit of swapping tracks from under a running stream (device
+    // switch, driver reset, OS sleep). The replacement arrives unmuted whatever
+    // the store says, so the mute is re-asserted for as long as it is held.
+    // One interval for the life of the page is cheaper than wiring track
+    // 'mute' events on every track the stream will ever contain.
+    const micWatch = setInterval(() => {
+      if (store.getState().micMuted) setMicEnabled(false)
+    }, 1000)
+
     return () => {
       cancelAnimationFrame(raf)
       window.removeEventListener('keydown', onKey)
       clearIdle()
       if (voicePoll.current) clearInterval(voicePoll.current)
+      clearInterval(micWatch)
       voice.current?.stop()
       speaker.current?.cancel()
       // The camera must not outlive the page that turned it on.
