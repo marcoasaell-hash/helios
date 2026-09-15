@@ -21,6 +21,35 @@ export async function getMic(): Promise<MediaStream> {
   return stream
 }
 
+/**
+ * M, as on a mixing desk.
+ *
+ * Muting is a property of the shared track, not of any one consumer: the VAD,
+ * the reactor meter and MediaRecorder all draw from the one getUserMedia
+ * stream, so switching the track itself silences every listener at once with
+ * no re-plumbing anywhere. The track stays LIVE — only `enabled` flips — which
+ * is what makes unmute instant and keeps the browser's mic-in-use indicator
+ * honest: something is still holding the device, it just refuses to pass
+ * audio. (Stopping the track instead would drop the permission and hand the
+ * mic to the OS until the next unmute re-prompted.)
+ *
+ * The browser SpeechRecognition fallback runs its own capture outside this
+ * stream and cannot be reached here — it is silenced by the `deaf` mode
+ * override in App's `mode()` instead.
+ */
+export function setMicEnabled(on: boolean): void {
+  stream?.getAudioTracks().forEach((t) => {
+    t.enabled = on
+  })
+}
+
+/** Current mute state of the shared track. Unopened mic counts as live. */
+export function micEnabled(): boolean {
+  const tracks = stream?.getAudioTracks() ?? []
+  if (tracks.length === 0) return true
+  return tracks.some((t) => t.enabled)
+}
+
 export async function startAnalyser(): Promise<void> {
   if (analyser) return
   const s = await getMic()

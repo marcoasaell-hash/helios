@@ -1,5 +1,13 @@
 import { create } from 'zustand'
 
+/** Brain quota + the currently serving provider, as the brain proxy reports it. */
+export type Quota = {
+  limit: number | null
+  remaining: number | null
+  reset: string | null
+  active: string | null
+}
+
 export type Phase =
   | 'offline'   // waiting for the click that unlocks audio
   | 'boot'      // startup sequence
@@ -219,12 +227,18 @@ type State = {
   turns: Turn[]
   activeTool: string | null
   error: string | null
+  /** Brain quota + which brain is serving, as reported by the brain proxy. */
+  quota: Quota | null
   connected: string[]
   /** Name of the speech-synthesis voice in use, shown in the HUD. */
   voice: string
   /** Whether the camera is on and hands are being tracked. Store-backed rather
    *  than read off the tracker, because the indicator has to re-render. */
   gestures: boolean
+  /** True while M has muted the microphone: nothing is captured or
+   *  transcribed, and the HUD says so. Typing in the composer still works —
+   *  mute takes the ears away, not the whole assistant. */
+  micMuted: boolean
   /** Set while JARVIS is taking a look, to whatever he said he was looking for.
    *  null when he is not. The camera light is on either way — this says why. */
   looking: string | null
@@ -240,9 +254,15 @@ type State = {
   expandedBlade: string | null
   /** JARVIS's control over his own appearance. UI_DEFAULTS == the stock look. */
   ui: UiState
+  /** Keyboard composer: false = voice-first (Mic), true = text input open.
+   *  Voice keeps running underneath — typing never mutes the loop. */
+  composerOpen: boolean
+  /** A typed line waiting to be answered. App consumes + clears it. */
+  pendingText: { id: string; text: string } | null
 
   setVoice: (v: string) => void
   setGestures: (on: boolean) => void
+  setMicMuted: (m: boolean) => void
   setLooking: (why: string | null) => void
   setBootNote: (n: string) => void
   pushPanel: (p: Panel) => void
@@ -257,9 +277,13 @@ type State = {
   setCaption: (c: string) => void
   setActiveTool: (t: string | null) => void
   setError: (e: string | null) => void
+  setQuota: (q: Quota | null) => void
   setConnected: (c: string[]) => void
   pushTurn: (t: Turn) => void
   appendToLastTurn: (text: string) => void
+  setComposerOpen: (open: boolean) => void
+  submitText: (text: string) => void
+  clearPendingText: () => void
 
   applyUi: (patch: UiPatch) => void
   addOrbit: (o: OrbitObject) => void
@@ -277,9 +301,11 @@ export const useStore = create<State>((set) => ({
   turns: [],
   activeTool: null,
   error: null,
+  quota: null,
   connected: [],
   voice: '',
   gestures: false,
+  micMuted: false,
   looking: null,
   panels: [],
   blades: [],
@@ -287,9 +313,26 @@ export const useStore = create<State>((set) => ({
   expandedBlade: null,
   bootNote: '',
   ui: defaultUi(),
+  composerOpen: false,
+  pendingText: null,
+
+  setComposerOpen: (composerOpen) => set({ composerOpen }),
+  submitText: (text) => {
+    const clean = text.trim()
+    if (!clean) return
+    set({
+      pendingText: {
+        id: `txt${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`,
+        text: clean,
+      },
+      composerOpen: false,
+    })
+  },
+  clearPendingText: () => set({ pendingText: null }),
 
   setVoice: (voice) => set({ voice }),
   setGestures: (gestures) => set({ gestures }),
+  setMicMuted: (micMuted) => set({ micMuted }),
   setLooking: (looking) => set({ looking }),
   setBootNote: (bootNote) => set({ bootNote }),
   // Three is as many as fits around the reactor without crowding it. Sticky
@@ -351,6 +394,7 @@ export const useStore = create<State>((set) => ({
   setCaption: (caption) => set({ caption }),
   setActiveTool: (activeTool) => set({ activeTool }),
   setError: (error) => set({ error }),
+  setQuota: (quota) => set({ quota }),
   setConnected: (connected) => set({ connected }),
   pushTurn: (turn) => set((s) => ({ turns: [...s.turns.slice(-40), turn] })),
   appendToLastTurn: (text) =>

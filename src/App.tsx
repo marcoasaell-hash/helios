@@ -29,8 +29,9 @@ import {
   usingBridge,
   type Msg,
 } from './lib/brain'
-import { startAnalyser, micLevel } from './lib/audio'
+import { startAnalyser, micLevel, setMicEnabled } from './lib/audio'
 import { probeCapabilities } from './lib/capabilities'
+import { startQuotaPolling } from './lib/quota'
 import { env } from './config'
 
 /**
@@ -184,6 +185,26 @@ export default function App() {
 
       if (stale()) return
 
+      /**
+       * A turn can resolve without a single streamed delta — an SDK build that
+       * emits whole messages, or a result that arrives before the first
+       * partial event. Until this existed the resolved text was dropped: no
+       * transcript entry, nothing spoken, and the HUD snapped straight back
+       * from thinking to listening to standby, which read exactly like an
+       * assistant that ignores you. Such turns get the same treatment a
+       * streamed one got: transcript, caption and voice. Only unstreamed
+       * turns land here — a streamed one already has its deltas in the
+       * transcript, and appending the final text would say it all twice.
+       */
+      if (!started && text) {
+        started = true
+        store.getState().setPhase('speaking')
+        store.getState().setActiveTool(null)
+        music.working(false)
+        store.getState().pushTurn({ id: turnId, role: 'jarvis', text })
+        spk.push(text)
+      }
+
       // The bridge keeps conversation state in its own session, so history is
       // only threaded through on the direct path.
       if (!usingBridge) {
@@ -201,9 +222,25 @@ export default function App() {
       if (stale()) return
       console.error(err)
       sfx.play('error')
-      store
-        .getState()
-        .setError(err instanceof Error ? err.message : 'Something went wrong.')
+      const msg = err instanceof Error ? err.message : 'Something went wrong.'
+      /**
+       * The free brain's day is spent. A raw 429 message would name retry
+       * budgets and headers; what the person needs to know is that he is not
+       * ignoring them and when he will be back. Spoken, once, plainly.
+       */
+      if (/rate.?limit|429|quota/i.test(msg)) {
+        const quota = store.getState().quota
+        const reset = quota?.reset ? new Date(quota.reset) : null
+        const when =
+          reset && reset.getTime() > Date.now()
+            ? ` I will be back at ${reset.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}.`
+            : ' The daily allowance resets at midnight.'
+        const line = `My free daily allowance is spent, sir.${when}`
+        store.getState().setError(line)
+        spk.say(line)
+      } else {
+        store.getState().setError(msg)
+      }
     } finally {
       if (!stale()) {
         speaker.current = null
@@ -220,8 +257,11 @@ export default function App() {
 
   // -- voice events ---------------------------------------------------------
 
-  /** What the voice loop should do with what it hears, derived from phase. */
+  /** What the voice loop should do with what it hears, derived from phase —
+   *  and muted overrules everything: M takes the ears away entirely, so the
+   *  recogniser goes deaf even though the phases keep moving underneath. */
   const mode = (): VoiceMode => {
+    if (store.getState().micMuted) return 'deaf'
     switch (store.getState().phase) {
       case 'offline':
       case 'boot':
@@ -494,7 +534,10 @@ export default function App() {
     await new Promise((r) => setTimeout(r, 9200)) // boot sequence
     await warming
     store.getState().setConnected(connectedLabels())
-    store.getState().setVoice(currentVoiceName())
+    // Probe FIRST, then name the voice. currentVoiceName() reports ElevenLabs
+    // when the bridge says it has a key — asked before the probe, it can only
+    // answer "default", and the HUD then labelled a session that was speaking
+    // ElevenLabs as the browser voice until the next time V was pressed.
 
     // The analyser is what makes the reactor pulse with your voice. It needs a
     // getUserMedia stream; speech recognition does not, and gets its own. So a
@@ -513,6 +556,8 @@ export default function App() {
     // first turn already uses ElevenLabs when a key is present and the browser
     // fallback when it is not — no flag, no reload.
     await probeCapabilities()
+    store.getState().setVoice(currentVoiceName())
+    startQuotaPolling()
 
     // One voice loop, started once, running until the page closes.
     voice.current = await startVoice({
@@ -558,6 +603,52 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase])
 
+  // -- typed turns (keyboard fallback beside voice-first) ---------------------
+
+  /**
+   * A line from the composer takes the exact same road as a spoken utterance:
+   * it interrupts an answer in flight and becomes the new turn. Voice keeps
+   * running underneath — typing never mutes the loop.
+   */
+  const onTypedText = (raw: string) => {
+    const text = raw.trim()
+    if (!text) return
+    const phase = store.getState().phase
+    if (phase === 'offline' || phase === 'boot') return
+
+    store.getState().setError(null)
+
+    // A bare "jarvis" typed alone is a greeting, not a question.
+    if (BARE_NAME.test(text)) {
+      // From standby this is the wake itself; mid-conversation just re-open
+      // the window without bothering the model.
+      if (phase === 'dormant') onWake('')
+      else listen(AWAIT_SPEECH_MS)
+      return
+    }
+    const said = text.replace(LEADING_NAME, '').trim() || text
+
+    if (phase === 'dormant' || phase === 'waking' || phase === 'listening') {
+      // Waking: the greeting may still be mid-sentence — cut it first, or the
+      // typed answer and the greeting speak over each other.
+      if (phase === 'waking') onSpeechStart()
+      void respond(said)
+      return
+    }
+    // Busy (thinking / tooling / speaking): cut him off first, exactly like
+    // a spoken barge-in, then answer the typed line.
+    onSpeechStart()
+    void respond(said)
+  }
+
+  const pendingText = useStore((s) => s.pendingText)
+  useEffect(() => {
+    if (!pendingText) return
+    store.getState().clearPendingText()
+    onTypedText(pendingText.text)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingText])
+
   // -- level pump + keys ----------------------------------------------------
 
   useEffect(() => {
@@ -577,8 +668,20 @@ export default function App() {
     pump()
 
     const onKey = (e: KeyboardEvent) => {
-      const tag = (e.target as HTMLElement)?.tagName
-      if (tag === 'INPUT' || tag === 'TEXTAREA') return
+      // Focused interactive controls own the keyboard: the global shortcuts
+      // preventDefault, which would swallow a blade button's native Enter
+      // activation and stop typing/selecting inside form fields entirely.
+      const target = e.target as HTMLElement | null
+      const tag = target?.tagName
+      if (
+        tag === 'INPUT' ||
+        tag === 'TEXTAREA' ||
+        tag === 'BUTTON' ||
+        tag === 'A' ||
+        tag === 'SELECT' ||
+        target?.isContentEditable
+      )
+        return
 
       // V auditions the next British voice installed on this machine. Which
       // ones exist varies per Mac, so hearing them beats trusting a ranking.
@@ -629,11 +732,41 @@ export default function App() {
         return
       }
 
-      // T speaks a fixed line, bypassing the wake word, the recogniser and the
+      // M mutes the microphone — M again unmutes. The shared track is what
+      // actually flips (see setMicEnabled), so VAD, the reactor meter and any
+      // recording go silent in one place, and the browser recogniser fallback
+      // is silenced through mode()'s deaf override. Space still talks, and the
+      // composer still types: mute takes the ears, not the whole assistant.
+      if (
+        (e.key === 'm' || e.key === 'M') &&
+        !e.repeat &&
+        !e.metaKey &&
+        !e.ctrlKey &&
+        !e.altKey
+      ) {
+        e.preventDefault()
+        const st = store.getState()
+        if (st.phase === 'offline') return
+        const next = !st.micMuted
+        // An analyser fed by a suspended track would freeze its meter at a
+        // stale level and leave the reactor pulsing to a ghost; zero it now.
+        if (next) store.getState().setLevel(0)
+        st.setMicMuted(next)
+        setMicEnabled(!next)
+        return
+      }
+
+      // S speaks a fixed line, bypassing the wake word, the recogniser and the
       // model entirely. When "I can't hear him" is the report, this is the one
       // keypress that separates a broken voice engine from a broken voice loop
       // — and it prints the verdict rather than making you infer it.
-      if (e.key === 't' && !e.repeat && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      if (
+        (e.key === 's' || e.key === 'S') &&
+        !e.repeat &&
+        !e.metaKey &&
+        !e.ctrlKey &&
+        !e.altKey
+      ) {
         e.preventDefault()
         silence()
         const t = createSpeaker()
@@ -652,10 +785,48 @@ export default function App() {
       }
 
       // Escape stands the whole thing down — the one thing the old build had
-      // no key for at all.
+      // no key for at all. Except while the composer is open: then it only
+      // closes the box, so a stray Escape never kills the conversation.
       if (e.key === 'Escape') {
         e.preventDefault()
+        if (store.getState().composerOpen) {
+          store.getState().setComposerOpen(false)
+          return
+        }
         if (store.getState().phase !== 'offline') goDormant()
+        return
+      }
+
+      // T / Enter opens the keyboard composer — the fallback beside
+      // voice-first. Voice stays primary: the loop keeps running underneath,
+      // Enter inside the box sends the line through the same turn pipeline
+      // as speech. K and / stay as aliases.
+      if (
+        (e.key === 't' ||
+          e.key === 'T' ||
+          e.key === 'k' ||
+          e.key === 'K' ||
+          e.key === '/' ||
+          e.key === 'Enter') &&
+        !e.repeat &&
+        !e.metaKey &&
+        !e.ctrlKey &&
+        !e.altKey
+      ) {
+        const st = store.getState()
+        if (st.phase === 'offline') {
+          // Enter (and T) also boot from the ignition screen, like Space.
+          if (e.key === 'Enter' || e.key === 't' || e.key === 'T') {
+            e.preventDefault()
+            void powerOn()
+          }
+          return
+        }
+        if (st.phase === 'boot') return
+        // While open, Enter belongs to the box (send), not to this toggle.
+        if (st.composerOpen && e.key === 'Enter') return
+        e.preventDefault()
+        st.setComposerOpen(!st.composerOpen)
         return
       }
 
@@ -682,11 +853,22 @@ export default function App() {
     }
     window.addEventListener('keydown', onKey)
 
+    // The mic lives as long as the page, and so does M's mute — but so does a
+    // browser's habit of swapping tracks from under a running stream (device
+    // switch, driver reset, OS sleep). The replacement arrives unmuted whatever
+    // the store says, so the mute is re-asserted for as long as it is held.
+    // One interval for the life of the page is cheaper than wiring track
+    // 'mute' events on every track the stream will ever contain.
+    const micWatch = setInterval(() => {
+      if (store.getState().micMuted) setMicEnabled(false)
+    }, 1000)
+
     return () => {
       cancelAnimationFrame(raf)
       window.removeEventListener('keydown', onKey)
       clearIdle()
       if (voicePoll.current) clearInterval(voicePoll.current)
+      clearInterval(micWatch)
       voice.current?.stop()
       speaker.current?.cancel()
       // The camera must not outlive the page that turned it on.

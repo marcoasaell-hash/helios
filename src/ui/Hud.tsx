@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import { useStore, accentFor, type Phase } from '../store'
+import { quotaLabel } from '../lib/quota'
 import { Suggestions } from './Suggestions'
+import { Composer } from './Composer'
 import { BladeSweep, Blades } from './Blades'
 import { Effects } from './Effects'
 import { Pointer } from './Pointer'
@@ -157,8 +159,10 @@ export function Hud() {
   const voice = useStore((s) => s.voice)
   const bootNote = useStore((s) => s.bootNote)
   const gestures = useStore((s) => s.gestures)
+  const micMuted = useStore((s) => s.micMuted)
   const looking = useStore((s) => s.looking)
   const ui = useStore((s) => s.ui)
+  const quota = useStore((s) => s.quota)
 
   // accentFor folds JARVIS's overrides in over the phase colour, so one
   // variable on the root carries a theme change into every .hud-* rule without
@@ -204,6 +208,18 @@ export function Hud() {
                 LISTENING and PROCESSING for the rest of the session. */}
             {phase === 'boot' && bootNote ? bootNote : statusText[phase]}
           </span>
+          {/* Which brain is answering, and what is left of its day when that
+              is a thing this session has. `BRAIN 12/50` is the online brain's
+              budget; `BRAIN OLLAMA` means the fallback took over. */}
+          {quotaLabel(quota) && (
+            <span className={`quota mono${quota && quota.active && quota.active !== 'openrouter' ? ' low' : ''}`}>
+              {quotaLabel(quota)}
+            </span>
+          )}
+          {/* M is a mixing-desk mute: the shared mic track goes dead while it
+              is held. Standing next to the phase so "why isn't it hearing me"
+              answers itself before it becomes a bug report. */}
+          {micMuted && <span className="quota low">MIC MUTED</span>}
         </div>
       </header>
 
@@ -308,11 +324,13 @@ export function Hud() {
 
       {ui.chrome.suggestions && <Suggestions />}
 
+      <Composer />
+
       {error && <div className="error">{error}</div>}
 
       <footer className="hud-bottom">
         <span className="hint">
-          say <b>“hey jarvis”</b> · <kbd>Space</kbd> to talk · <kbd>G</kbd> hands
+          say <b>“hey jarvis”</b> · <kbd>Space</kbd> to talk · <kbd>T</kbd>/<kbd>↵</kbd> type · <kbd>M</kbd> mute · <kbd>S</kbd> sound · <kbd>G</kbd> hands
           {voice && (
             <>
               {' · '}
