@@ -56,6 +56,15 @@ import { join } from 'node:path'
 const SOCKET_DIR = `/tmp/claude-mcp-browser-bridge-${userInfo().username}`
 
 /**
+ * Windows has no Unix domain sockets for the native host to drop a file into —
+ * it exposes a single well-known named pipe instead, `\\.\pipe\<name>`, with no
+ * per-restart suffix to disambiguate. So there is nothing to scan for; there is
+ * exactly one path, and it either exists or the extension is not running.
+ */
+const WINDOWS_PIPE_PATH = `\\\\.\\pipe\\claude-mcp-browser-bridge-${userInfo().username}`
+const WINDOWS_PIPE_NAME = `claude-mcp-browser-bridge-${userInfo().username}`
+
+/**
  * How long a single browser action may take.
  *
  * Generous because these are real page loads on a real network, and the failure
@@ -82,6 +91,18 @@ const CONNECT_TIMEOUT_MS = 3_000
  * accepted as a last resort, because on some setups it is all there is.
  */
 async function findSocket() {
+  if (process.platform === 'win32') {
+    // Named pipes live in a virtual namespace, not a real directory, but
+    // Node's readdir happens to walk it anyway — the cheapest way to ask
+    // "does this one exist" without opening a connection to find out.
+    try {
+      const names = await readdir('\\\\.\\pipe\\')
+      return names.includes(WINDOWS_PIPE_NAME) ? WINDOWS_PIPE_PATH : null
+    } catch {
+      return null
+    }
+  }
+
   let names
   try {
     names = await readdir(SOCKET_DIR)
