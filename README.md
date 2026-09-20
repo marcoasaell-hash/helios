@@ -49,7 +49,7 @@ npm install
 npm start          # runs the brain and the face together
 ```
 
-Then open the URL it prints (http://localhost:5173) in **Chrome**, click **INITIALISE**, and say **“Hey Jarvis”**.
+Then open the URL it prints (http://localhost:5173) in **Chrome**, click **INITIALISE**, and say **"Hey Jarvis"**.
 
 Prefer two terminals? Run them separately instead:
 
