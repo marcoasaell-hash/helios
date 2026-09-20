@@ -57,20 +57,67 @@ const paint = (tag, colour) => (line) =>
 
 const children = []
 
-function run(name, command, args, colour, env) {
+// The Agent SDK's child-process teardown has a known Windows issue: tearing
+// down its `claude` CLI child on session close can take the bridge itself out
+// with it (no JS exception, just gone). That is not a reason to take the face
+// down too, so the bridge alone gets to restart in place. A cap and a rolling
+// window keep a genuinely broken bridge (bad config, crash on startup) from
+// respawning forever instead of surfacing the failure.
+const MAX_RESTARTS = 5
+const RESTART_WINDOW_MS = 30_000
+
+function run(name, command, args, colour, env, { restart = false } = {}) {
   const label = paint(name, colour)
-  const child = spawn(command, args, {
-    env: { ...process.env, ...env },
-    shell: false,
-  })
-  child.stdout.on('data', (d) => process.stdout.write(label(d) + '\n'))
-  child.stderr.on('data', (d) => process.stderr.write(label(d) + '\n'))
-  child.on('exit', (code) => {
-    // If either half dies the other is useless, so take the whole thing down
-    // rather than leave a half-running app that looks alive but cannot answer.
-    console.log(`\x1b[${colour}m${name}\x1b[0m exited (${code}); stopping the rest.`)
-    shutdown(code ?? 0)
-  })
+  const restarts = []
+
+  function spawnChild() {
+    const child = spawn(command, args, {
+      env: { ...process.env, ...env },
+      shell: false,
+    })
+    child.stdout.on('data', (d) => process.stdout.write(label(d) + '\n'))
+    child.stderr.on('data', (d) => process.stderr.write(label(d) + '\n'))
+    child.on('exit', (code) => {
+      if (stopping) return
+
+      if (restart && code !== 0) {
+        const now = Date.now()
+        while (restarts.length && now - restarts[0] > RESTART_WINDOW_MS) {
+          restarts.shift()
+        }
+        restarts.push(now)
+        if (restarts.length <= MAX_RESTARTS) {
+          console.log(
+            `\x1b[${colour}m${name}\x1b[0m exited (${code}); restarting it.`,
+          )
+          // A dead listener's socket isn't always free the instant the
+          // process is gone, especially after a hard kill on Windows.
+          // Respawning immediately just trades one EADDRINUSE crash for
+          // another, burning through the whole retry budget in one breath.
+          const idx = children.indexOf(child)
+          setTimeout(() => {
+            if (stopping) return
+            const next = spawnChild()
+            if (idx !== -1) children[idx] = next
+          }, 1500)
+          return
+        }
+        console.log(
+          `\x1b[${colour}m${name}\x1b[0m crashed ${restarts.length} times in ` +
+            `${RESTART_WINDOW_MS / 1000}s; giving up and stopping the rest.`,
+        )
+      }
+
+      // If either half dies for good the other is useless, so take the whole
+      // thing down rather than leave a half-running app that looks alive but
+      // cannot answer.
+      console.log(`\x1b[${colour}m${name}\x1b[0m exited (${code}); stopping the rest.`)
+      shutdown(code ?? 0)
+    })
+    return child
+  }
+
+  const child = spawnChild()
   children.push(child)
   return child
 }
@@ -114,7 +161,7 @@ if (port) {
 vendorWasm()
 
 console.log('\nJ.A.R.V.I.S. starting — the brain and the face.\n')
-run('bridge', 'node', ['bridge/server.mjs'], '36', bridgeEnv)
+run('bridge', 'node', ['bridge/server.mjs'], '36', bridgeEnv, { restart: true })
 // npm is a shell script on most systems; call the vite binary directly so we do
 // not need shell:true (which would break the argument handling above).
 run('face', process.execPath, ['node_modules/vite/bin/vite.js'], '35', {})
