@@ -3,6 +3,7 @@ import { Scene } from './scene/Scene'
 import { Hud } from './ui/Hud'
 import { Boot } from './ui/Boot'
 import { Ignition } from './ui/Ignition'
+import { Composer } from './ui/Composer'
 import { Diagnostics } from './ui/Diagnostics'
 import { useStore } from './store'
 import { startVoice, type Voice, type VoiceMode } from './lib/voice'
@@ -305,6 +306,20 @@ export default function App() {
       return
     }
 
+    void respond(said)
+  }
+
+  // Typed access — a second door into the same turn the voice path runs.
+  const submitText = (raw: string) => {
+    const said = raw.trim()
+    if (!said) return
+    const phase = store.getState().phase
+    if (phase === 'offline' || phase === 'boot') return
+    if (phase === 'thinking' || phase === 'tooling' || phase === 'speaking') {
+      silence()
+      turn.current++
+      interrupt()
+    }
     void respond(said)
   }
 
@@ -699,6 +714,7 @@ export default function App() {
     <>
       <Scene />
       <Hud />
+      <Composer onSend={submitText} />
       <Boot />
       <Diagnostics />
       <Ignition onStart={() => void powerOn()} />

@@ -1896,3 +1896,50 @@ kbd {
   transform: scaleX(-1);
   background: #000;
 }
+
+/* ── Text composer: type to JARVIS (voice still works) ───────────────── */
+.composer {
+  position: fixed;
+  left: 50%;
+  bottom: 28px;
+  transform: translateX(-50%);
+  z-index: 40;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  width: min(680px, 82vw);
+  padding: 6px 6px 6px 16px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent, #38bdf8) 8%, rgba(2, 8, 16, 0.72));
+  border: 1px solid color-mix(in srgb, var(--accent, #38bdf8) 40%, transparent);
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.45),
+    inset 0 0 20px color-mix(in srgb, var(--accent, #38bdf8) 10%, transparent);
+  backdrop-filter: blur(10px);
+}
+.composer-input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: 0;
+  outline: none;
+  color: #e6f4ff;
+  font: inherit;
+  font-size: 15px;
+  letter-spacing: 0.2px;
+}
+.composer-input::placeholder { color: color-mix(in srgb, var(--accent, #38bdf8) 55%, #7fa8c0); }
+.composer-send {
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 0;
+  cursor: pointer;
+  color: #001018;
+  background: var(--accent, #38bdf8);
+  font-size: 16px;
+  line-height: 34px;
+  transition: transform 0.12s ease, filter 0.12s ease;
+}
+.composer-send:hover { filter: brightness(1.12); transform: scale(1.06); }
+.composer-send:active { transform: scale(0.96); }
