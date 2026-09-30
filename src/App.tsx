@@ -3,6 +3,7 @@ import { Scene } from './scene/Scene'
 import { Hud } from './ui/Hud'
 import { Boot } from './ui/Boot'
 import { Ignition } from './ui/Ignition'
+import { Composer } from './ui/Composer'
 import { Diagnostics } from './ui/Diagnostics'
 import { useStore } from './store'
 import { startVoice, type Voice, type VoiceMode } from './lib/voice'
@@ -308,6 +309,20 @@ export default function App() {
     void respond(said)
   }
 
+  // Typed access — a second door into the same turn the voice path runs.
+  const submitText = (raw: string) => {
+    const said = raw.trim()
+    if (!said) return
+    const phase = store.getState().phase
+    if (phase === 'offline' || phase === 'boot') return
+    if (phase === 'thinking' || phase === 'tooling' || phase === 'speaking') {
+      silence()
+      turn.current++
+      interrupt()
+    }
+    void respond(said)
+  }
+
   const onPartial = (text: string) => {
     store.getState().setCaption(text)
   }
@@ -327,6 +342,19 @@ export default function App() {
 
     try {
       await ignite()
+      // #1 auto-brief: right after the required INITIALISE gesture unlocks
+      // audio, speak the situational briefing instead of waiting for the wake
+      // word. Opt-in via VITE_AUTO_BRIEF. A short delay lets the bridge connect.
+      if (import.meta.env.VITE_AUTO_BRIEF) {
+        setTimeout(() => {
+          void respond(
+            'Boot briefing, spoken aloud. In a few short lines: what did I miss ' +
+            '— unread mail that actually needs me, the calendar for today, and ' +
+            'any alerts or new security or login events. First recall anything ' +
+            'relevant we were working on.',
+          )
+        }, 7000)
+      }
     } catch (err) {
       // The guard must not outlive a failed boot. Audio unlock can be refused,
       // the microphone prompt dismissed, the bridge unreachable at the wrong
@@ -699,6 +727,7 @@ export default function App() {
     <>
       <Scene />
       <Hud />
+      <Composer onSend={submitText} />
       <Boot />
       <Diagnostics />
       <Ignition onStart={() => void powerOn()} />
