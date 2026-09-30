@@ -342,6 +342,19 @@ export default function App() {
 
     try {
       await ignite()
+      // #1 auto-brief: right after the required INITIALISE gesture unlocks
+      // audio, speak the situational briefing instead of waiting for the wake
+      // word. Opt-in via VITE_AUTO_BRIEF. A short delay lets the bridge connect.
+      if (import.meta.env.VITE_AUTO_BRIEF) {
+        setTimeout(() => {
+          void respond(
+            'Boot briefing, spoken aloud. In a few short lines: what did I miss ' +
+            '— unread mail that actually needs me, the calendar for today, and ' +
+            'any alerts or new security or login events. First recall anything ' +
+            'relevant we were working on.',
+          )
+        }, 7000)
+      }
     } catch (err) {
       // The guard must not outlive a failed boot. Audio unlock can be refused,
       // the microphone prompt dismissed, the bridge unreachable at the wrong

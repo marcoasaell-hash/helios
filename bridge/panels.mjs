@@ -1,6 +1,7 @@
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk'
 import { z } from 'zod'
 import { probeUrl } from './page.mjs'
+import { execFile } from 'node:child_process'
 
 /**
  * The `display` tool — JARVIS's screen.
@@ -420,6 +421,43 @@ export function displayServer(emit, emitBlade) {
         async (args) => {
           const report = await probeUrl(String(args.url ?? ''))
           return { content: [{ type: 'text', text: JSON.stringify(report, null, 1) }] }
+        },
+      ),
+      tool(
+        'notify',
+        'Send a real desktop notification to Mohamed (an OS pop-up). Use it to ' +
+        'keep him informed when he may not be looking at the screen: a task you ' +
+        'finished, something that changed, an alert worth surfacing. Short title, ' +
+        'one-line body. Do not narrate that you sent it.',
+        {
+          title: z.string().describe('Short title, a few words.'),
+          message: z.string().describe('One-line body.'),
+          urgency: z
+            .enum(['low', 'normal', 'critical'])
+            .optional()
+            .describe('Defaults to normal; critical for things that need him now.'),
+        },
+        async (args) => {
+          const title = String(args.title ?? 'JARVIS')
+          const message = String(args.message ?? '')
+          const urgency = ['low', 'normal', 'critical'].includes(args.urgency)
+            ? args.urgency
+            : 'normal'
+          try {
+            await new Promise((res, rej) =>
+              execFile(
+                'notify-send',
+                ['-a', 'JARVIS', '-u', urgency, title, message],
+                (e) => (e ? rej(e) : res()),
+              ),
+            )
+            return { content: [{ type: 'text', text: 'Notification delivered.' }] }
+          } catch (e) {
+            return {
+              isError: true,
+              content: [{ type: 'text', text: 'notify-send failed: ' + String(e?.message ?? e) }],
+            }
+          }
         },
       ),
     ],
