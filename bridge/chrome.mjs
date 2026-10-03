@@ -56,6 +56,12 @@ import { join } from 'node:path'
 const SOCKET_DIR = `/tmp/claude-mcp-browser-bridge-${userInfo().username}`
 
 /**
+ * Windows has no socket directory. The native host listens on one named pipe
+ * per user instead, with no pid in the name — the same path Claude Code dials.
+ */
+const WIN_PIPE = `\\\\.\\pipe\\claude-mcp-browser-bridge-${userInfo().username}`
+
+/**
  * How long a single browser action may take.
  *
  * Generous because these are real page loads on a real network, and the failure
@@ -82,6 +88,17 @@ const CONNECT_TIMEOUT_MS = 3_000
  * accepted as a last resort, because on some setups it is all there is.
  */
 async function findSocket() {
+  if (process.platform === 'win32') {
+    // A pipe that is not being served does not appear in the pipe namespace,
+    // so existence is a fair proxy for "the extension's host is running".
+    // existsSync/stat always say no for pipes, so list the namespace instead.
+    try {
+      const pipes = await readdir('\\\\.\\pipe\\')
+      return pipes.includes(WIN_PIPE.slice('\\\\.\\pipe\\'.length)) ? WIN_PIPE : null
+    } catch {
+      return null
+    }
+  }
   let names
   try {
     names = await readdir(SOCKET_DIR)
