@@ -233,6 +233,12 @@ Everything is optional in bridge mode. Frontend settings live in `.env.local`
 | `JARVIS_FILE_ROOTS` | — | Roots the `/file` endpoint may serve from |
 | `JARVIS_VOICE_ID` | — | ElevenLabs voice id |
 | `ELEVENLABS_API_KEY` | — | Optional; enables the ElevenLabs voice + Scribe |
+| `FISH_API_KEY` | — | Optional; with `JARVIS_FISH_VOICE_ID`, speaks through Fish Audio instead |
+| `JARVIS_FISH_VOICE_ID` | — | Fish Audio voice (model) id |
+| `JARVIS_FISH_MODEL` | `s1` | Fish Audio TTS model |
+
+The bridge also reads these from `.env.local`, so they need not be set in every
+shell; a value already in the shell environment wins.
 
 ### Frontend (`.env.local`)
 

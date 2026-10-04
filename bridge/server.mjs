@@ -28,6 +28,16 @@ import { isAbsolute, join, relative, resolve as resolvePath } from 'node:path'
 import { openRemote, proxyError, vetTarget, PROXY_UA } from './net.mjs'
 import { probeUrl, renderPage } from './page.mjs'
 
+// Bridge settings normally come from the shell, which on Windows means setting
+// them again in every new terminal. Reading .env.local as well gives keys one
+// gitignored home; anything already in the shell still wins. Vite reads the
+// same file but only ever hands VITE_-prefixed values to the browser.
+try {
+  process.loadEnvFile(new URL('../.env.local', import.meta.url))
+} catch {
+  /* no .env.local — the shell environment is all there is */
+}
+
 const PORT = Number(process.env.JARVIS_BRIDGE_PORT ?? 8787)
 
 /**
@@ -460,6 +470,15 @@ function elevenKey() {
 const VOICE_ID = process.env.JARVIS_VOICE_ID ?? 'JBFqnCBsd6RMkjVDRZzb'
 
 /**
+ * Fish Audio, as an alternative voice. When both a key and a voice id are set
+ * it takes over /tts; transcription is untouched, since Fish is only the voice.
+ */
+const FISH_KEY = process.env.FISH_API_KEY?.trim() || null
+const FISH_VOICE_ID = process.env.JARVIS_FISH_VOICE_ID?.trim() || null
+const FISH_MODEL = process.env.JARVIS_FISH_MODEL ?? 's1'
+const fishReady = () => Boolean(FISH_KEY && FISH_VOICE_ID)
+
+/**
  * Where /file is permitted to read from, and how big a read may get.
  *
  * The roots are realpath'd once at boot so the containment check below compares
@@ -684,7 +703,9 @@ const handleRequest = async (req, res) => {
     // student with nothing configured still has a working assistant.
     const eleven = Boolean(elevenKey())
     res.writeHead(200, { ...cors, 'content-type': 'application/json' })
-    return res.end(JSON.stringify({ ok: true, tts: eleven, stt: eleven }))
+    return res.end(
+      JSON.stringify({ ok: true, tts: eleven || fishReady(), stt: eleven }),
+    )
   }
 
   // Serve local image files to the page. Screenshots and generated art land on
@@ -807,10 +828,11 @@ const handleRequest = async (req, res) => {
   }
 
   if (req.method === 'POST' && req.url === '/tts') {
-    const key = elevenKey()
+    const fish = fishReady()
+    const key = fish ? FISH_KEY : elevenKey()
     if (!key) {
       res.writeHead(503, cors)
-      return res.end('no elevenlabs key')
+      return res.end('no voice key')
     }
     // A spoken line is a few hundred bytes. Anything approaching this is not a
     // sentence, and buffering it unbounded would let one request eat the heap.
@@ -842,7 +864,25 @@ const handleRequest = async (req, res) => {
       return res.end('no text')
     }
     try {
-      const upstream = await fetch(
+      const upstream = fish
+        ? await fetch('https://api.fish.audio/v1/tts', {
+            method: 'POST',
+            headers: {
+              authorization: `Bearer ${key}`,
+              'content-type': 'application/json',
+              model: FISH_MODEL,
+            },
+            body: JSON.stringify({
+              text,
+              reference_id: FISH_VOICE_ID,
+              format: 'mp3',
+              mp3_bitrate: 64,
+              // Same trade as the ElevenLabs path below: an earlier first byte
+              // matters more in conversation than the last bit of polish.
+              latency: 'balanced',
+            }),
+          })
+        : await fetch(
         `https://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}/stream` +
           // 22kHz mono is half the bytes of 44kHz and indistinguishable through
           // a laptop speaker; optimize_streaming_latency=3 trades a little
@@ -1002,7 +1042,7 @@ server.listen(PORT)
 
 console.log(`[jarvis] bridge listening on ws://localhost:${PORT}`)
 console.log(
-  `[jarvis] speech ${elevenKey() ? 'via ElevenLabs (key from MCP config)' : 'using browser fallback voice'}`,
+  `[jarvis] speech ${fishReady() ? `via Fish Audio (voice ${FISH_VOICE_ID})` : elevenKey() ? 'via ElevenLabs (key from MCP config)' : 'using browser fallback voice'}`,
 )
 console.log(`[jarvis] model ${MODEL} · effort ${EFFORT}`)
 console.log(
