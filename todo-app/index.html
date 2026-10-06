@@ -1,0 +1,437 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>To‑Do</title>
+  <meta name="color-scheme" content="light dark" />
+  <style>
+    :root {
+      --bg: #ffffff;
+      --text: #0f172a; /* slate-900 */
+      --muted: #cbd5e1; /* slate-300 */
+      --muted-2: #94a3b8; /* slate-400 */
+      --panel: #ffffff;
+      --shadow: 0 1px 2px rgba(2,6,23,0.06), 0 8px 24px rgba(2,6,23,0.06);
+      --accent: #2563eb; /* blue-600 */
+      --accent-weak: rgba(37,99,235,0.12);
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0b1220; /* slate-950-ish */
+        --text: #e5e7eb; /* zinc-200 */
+        --muted: #334155; /* slate-700 */
+        --muted-2: #64748b; /* slate-500 */
+        --panel: #0f172a; /* slate-900 */
+        --shadow: 0 1px 2px rgba(0,0,0,0.25), 0 8px 24px rgba(0,0,0,0.25);
+        --accent: #60a5fa; /* blue-400 */
+        --accent-weak: rgba(96,165,250,0.18);
+      }
+    }
+
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+      display: grid;
+      place-items: start center;
+    }
+
+    .wrap {
+      width: 100%;
+      max-width: 480px;
+      padding: 32px 16px 40px;
+    }
+
+    header {
+      text-align: center;
+      margin-bottom: 20px;
+      position: relative;
+    }
+    header h1 {
+      margin: 0 0 4px;
+      font-size: 24px;
+      letter-spacing: .2px;
+    }
+    header p { margin: 0; color: var(--muted-2); font-size: 13px; }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--muted);
+      border-radius: 12px;
+      box-shadow: var(--shadow);
+      overflow: clip;
+    }
+
+    form.add {
+      display: flex;
+      gap: 8px;
+      padding: 14px;
+      border-bottom: 1px solid var(--muted);
+      backdrop-filter: saturate(120%);
+    }
+    .add input[type="text"] {
+      flex: 1;
+      padding: 12px 12px;
+      border: 1px solid var(--muted);
+      background: transparent;
+      color: var(--text);
+      border-radius: 10px;
+      outline: none;
+      transition: border-color .18s ease, box-shadow .18s ease;
+    }
+    .add input[type="text"]:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-weak);
+    }
+    .add button {
+      padding: 12px 14px;
+      border: 1px solid var(--accent);
+      color: #fff;
+      background: var(--accent);
+      border-radius: 10px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: filter .15s ease, transform .04s ease;
+    }
+    .add button:hover { filter: brightness(1.05); }
+    .add button:active { transform: translateY(1px); }
+
+    ul.list { list-style: none; margin: 0; padding: 6px; }
+    li.item {
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 8px;
+      border-radius: 10px;
+      animation: fadeIn .18s ease-out both;
+    }
+    li.item:not(:last-child) { margin-bottom: 2px; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(2px);} to { opacity: 1; transform: none;} }
+
+    /* Custom checkbox with smooth fill/scale animation */
+    .check { display: inline-grid; place-items: center; }
+    .check input {
+      appearance: none;
+      -webkit-appearance: none;
+      width: 18px; height: 18px;
+      border: 2px solid var(--muted);
+      border-radius: 6px;
+      display: grid; place-items: center;
+      background: transparent;
+      transition: border-color .2s ease, background-color .2s ease, transform .12s ease;
+      cursor: pointer;
+    }
+    .check input::before {
+      content: "";
+      width: 10px; height: 10px;
+      border-radius: 3px;
+      transform: scale(0);
+      background: var(--accent);
+      transition: transform .18s ease-out;
+    }
+    .check input:checked {
+      border-color: var(--accent);
+      background: var(--accent-weak);
+    }
+    .check input:checked::before { transform: scale(1); }
+
+    .txt { position: relative; user-select: none; }
+    .txt .label { display: block; color: var(--text); }
+    .txt .label.small { color: var(--muted-2); font-size: 12px; }
+    .strike {
+      position: relative;
+      display: inline-block;
+    }
+    .strike::after {
+      content: "";
+      position: absolute; left: 0; right: 100%; top: 50%; height: 1px;
+      background: var(--muted-2);
+      transition: right .22s ease;
+    }
+    .done .strike::after { right: 0; }
+    .done .label { color: var(--muted-2); }
+
+    .del {
+      border: 1px solid var(--muted);
+      background: transparent;
+      color: var(--muted-2);
+      border-radius: 8px;
+      padding: 6px 8px;
+      cursor: pointer;
+      transition: border-color .15s ease, color .15s ease, background-color .15s ease, transform .04s ease;
+    }
+    .del:hover { border-color: #ef4444; color: #ef4444; background: rgba(239,68,68,.08); }
+    .del:active { transform: translateY(1px); }
+
+    footer {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 10px 14px 14px; color: var(--muted-2); font-size: 12px;
+    }
+    .hint { color: var(--muted-2); }
+    .lang { position: absolute; right: 0; top: 0; display: flex; gap: 6px; }
+    .lang button {
+      border: 1px solid var(--muted);
+      background: transparent;
+      color: var(--muted-2);
+      border-radius: 8px;
+      padding: 6px 8px;
+      cursor: pointer;
+      transition: border-color .15s ease, color .15s ease, background-color .15s ease, transform .04s ease;
+    }
+    .lang button:hover { border-color: var(--accent); color: var(--accent); }
+    .lang button.active { border-color: var(--accent); color: var(--accent); background: var(--accent-weak); }
+    .lang button:active { transform: translateY(1px); }
+
+    /* Footer controls */
+    footer.controls { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 8px; padding: 10px 14px 14px; }
+    .filters { display: flex; gap: 6px; justify-content: center; }
+    .filters button {
+      border: 1px solid var(--muted);
+      background: transparent;
+      color: var(--muted-2);
+      border-radius: 999px;
+      padding: 6px 10px;
+      cursor: pointer;
+      transition: border-color .15s ease, color .15s ease, background-color .15s ease;
+    }
+    .filters button:hover { border-color: var(--accent); color: var(--accent); }
+    .filters button.active { border-color: var(--accent); color: var(--accent); background: var(--accent-weak); }
+    .del.small { padding: 6px 8px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div class="lang" aria-label="Language">
+        <button id="lang-en" type="button">EN</button>
+        <button id="lang-hy" type="button">HY</button>
+      </div>
+      <h1>Tasks</h1>
+      <p class="hint">Add, complete, and delete. Saved locally.</p>
+    </header>
+
+    <section class="panel">
+      <form class="add" id="add-form" autocomplete="off">
+        <input id="new-text" type="text" placeholder="What needs doing?" minlength="1" maxlength="200" />
+        <button type="submit" aria-label="Add task">Add</button>
+      </form>
+      <ul class="list" id="list"></ul>
+      <footer class="controls">
+        <span id="count">0 items</span>
+        <div class="filters" role="tablist" aria-label="Filters">
+          <button id="filter-all" type="button" class="active">All</button>
+          <button id="filter-active" type="button">Active</button>
+          <button id="filter-completed" type="button">Completed</button>
+        </div>
+        <button id="clear-completed" type="button" class="del small">Clear completed</button>
+      </footer>
+    </section>
+  </div>
+
+  <script>
+    (function() {
+      const KEY = 'todo.app.v1';
+      /** @type {{id:string,text:string,done:boolean,created:number}[]} */
+      let items = [];
+
+      const LANG_KEY = 'todo.app.lang';
+      const locales = {
+        en: {
+          title: 'Tasks',
+          hint: 'Add, complete, and delete. Saved locally.',
+          placeholder: 'What needs doing?',
+          add: 'Add',
+          tip: 'Tip: Press Enter to add',
+          delete: 'Delete',
+          markComplete: 'Mark complete',
+          all: 'All',
+          active: 'Active',
+          completed: 'Completed',
+          clearCompleted: 'Clear completed'
+        },
+        hy: {
+          title: 'Անելիքներ',
+          hint: 'Ավելացրու, ավարտիր և ջնջիր։ Պահպանումը՝ localStorage‑ում։',
+          placeholder: 'Ի՞նչ պետք է անել',
+          add: 'Ավելացնել',
+          tip: 'Խորհուրդ․ Enter՝ ավելացնելու համար',
+          delete: 'Ջնջել',
+          markComplete: 'Նշել ավարտված',
+          all: 'Բոլորը',
+          active: 'Ակտիվ',
+          completed: 'Ավարտված',
+          clearCompleted: 'Մաքրել ավարտվածները'
+        }
+      };
+      let lang = (localStorage.getItem(LANG_KEY)) || ((navigator.language || '').toLowerCase().startsWith('hy') ? 'hy' : 'en');
+      const FILTER_KEY = 'todo.app.filter';
+      let filter = localStorage.getItem(FILTER_KEY) || 'all';
+
+      function t(key){ return (locales[lang] && locales[lang][key]) || locales.en[key] || key; }
+      function setLang(l){ lang = l; localStorage.setItem(LANG_KEY, l); applyLocale(); render(); }
+      function formatCount(n){ 
+        if (lang === 'hy') return n + ' ' + (n === 1 ? 'գործ' : 'գործ');
+        return n + ' ' + (n === 1 ? 'item' : 'items');
+      }
+
+      const $list = document.getElementById('list');
+      const $form = document.getElementById('add-form');
+      const $input = document.getElementById('new-text');
+      const $count = document.getElementById('count');
+
+      const $title = document.querySelector('header h1');
+      const $hint = document.querySelector('header p.hint');
+      const $addBtn = $form.querySelector('button[type="submit"]');
+      const $btnEn = document.getElementById('lang-en');
+      const $btnHy = document.getElementById('lang-hy');
+      const $filterAll = document.getElementById('filter-all');
+      const $filterActive = document.getElementById('filter-active');
+      const $filterCompleted = document.getElementById('filter-completed');
+      const $clear = document.getElementById('clear-completed');
+
+      function applyLocale(){
+        document.documentElement.lang = lang === 'hy' ? 'hy' : 'en';
+        $title.textContent = t('title');
+        $hint.textContent = t('hint');
+        $input.placeholder = t('placeholder');
+        $addBtn.textContent = t('add');
+        document.title = t('title');
+        if ($btnEn && $btnHy){
+          $btnEn.classList.toggle('active', lang === 'en');
+          $btnHy.classList.toggle('active', lang === 'hy');
+        }
+        if ($filterAll && $filterActive && $filterCompleted){
+          $filterAll.textContent = t('all');
+          $filterActive.textContent = t('active');
+          $filterCompleted.textContent = t('completed');
+        }
+        if ($clear){ $clear.textContent = t('clearCompleted'); }
+        $count.textContent = formatCount(items.length);
+      }
+
+      function updateFiltersUI(){
+        if ($filterAll && $filterActive && $filterCompleted){
+          $filterAll.classList.toggle('active', filter === 'all');
+          $filterActive.classList.toggle('active', filter === 'active');
+          $filterCompleted.classList.toggle('active', filter === 'completed');
+        }
+      }
+      function setFilter(f){ filter = f; localStorage.setItem(FILTER_KEY, f); updateFiltersUI(); render(); }
+
+      if ($btnEn) $btnEn.addEventListener('click', () => setLang('en'));
+      if ($btnHy) $btnHy.addEventListener('click', () => setLang('hy'));
+      if ($filterAll) $filterAll.addEventListener('click', () => setFilter('all'));
+      if ($filterActive) $filterActive.addEventListener('click', () => setFilter('active'));
+      if ($filterCompleted) $filterCompleted.addEventListener('click', () => setFilter('completed'));
+      if ($clear) $clear.addEventListener('click', () => { items = items.filter(x => !x.done); save(); render(); });
+
+      function uid() { return (Date.now().toString(36) + Math.random().toString(36).slice(2,7)); }
+
+      function load() {
+        const raw = localStorage.getItem(KEY);
+        if (!raw) {
+          items = [
+            { id: uid(), text: 'Review pull requests', done: false, created: Date.now()-400000 },
+            { id: uid(), text: 'Plan next sprint', done: false, created: Date.now()-300000 },
+            { id: uid(), text: 'Refactor utils module', done: true, created: Date.now()-200000 },
+          ];
+          save();
+        } else {
+          try { items = JSON.parse(raw) || []; } catch { items = []; }
+        }
+      }
+
+      function save() { localStorage.setItem(KEY, JSON.stringify(items)); }
+
+      function plural(n, w, s) { return n + ' ' + (n === 1 ? w : (s || w + 's')); }
+
+      function render() {
+        $list.innerHTML = '';
+        const frag = document.createDocumentFragment();
+        const data = filter === 'active' ? items.filter(it => !it.done) : (filter === 'completed' ? items.filter(it => it.done) : items);
+        data.forEach(it => {
+          const li = document.createElement('li');
+          li.className = 'item' + (it.done ? ' done' : '');
+          li.dataset.id = it.id;
+
+          const chk = document.createElement('label');
+          chk.className = 'check';
+          const input = document.createElement('input');
+          input.type = 'checkbox';
+          input.checked = it.done;
+          input.setAttribute('aria-label', t('markComplete'));
+          chk.appendChild(input);
+
+          const txt = document.createElement('div');
+          txt.className = 'txt';
+          const main = document.createElement('span');
+          main.className = 'label strike';
+          main.textContent = it.text;
+          const sub = document.createElement('div');
+          sub.className = 'label small';
+          const d = new Date(it.created);
+          sub.textContent = d.toLocaleString(lang === 'hy' ? 'hy-AM' : 'en-US');
+          txt.appendChild(main);
+          txt.appendChild(sub);
+
+          const del = document.createElement('button');
+          del.className = 'del';
+          del.type = 'button';
+          del.textContent = t('delete');
+
+          li.appendChild(chk);
+          li.appendChild(txt);
+          li.appendChild(del);
+          frag.appendChild(li);
+        });
+        $list.appendChild(frag);
+        $count.textContent = formatCount((filter === 'active') ? data.filter(it => !it.done).length : (filter === 'completed') ? data.filter(it => it.done).length : data.length);
+      }
+
+      // Event delegation for performance and simplicity
+      $list.addEventListener('change', (e) => {
+        const target = e.target;
+        if (target && target.matches('input[type="checkbox"]')) {
+          const id = target.closest('li').dataset.id;
+          const item = items.find(x => x.id === id);
+          if (item) {
+            item.done = !!target.checked;
+            save();
+            target.closest('li').classList.toggle('done', item.done);
+          }
+        }
+      });
+
+      $list.addEventListener('click', (e) => {
+        const btn = e.target;
+        if (btn && btn.matches('button.del')) {
+          const id = btn.closest('li').dataset.id;
+          items = items.filter(x => x.id !== id);
+          save();
+          render();
+        }
+      });
+
+      $form.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const text = ($input.value || '').trim();
+        if (!text) return;
+        items.unshift({ id: uid(), text, done: false, created: Date.now() });
+        $input.value = '';
+        save();
+        render();
+        $input.focus();
+      });
+
+      load();
+      applyLocale();
+      updateFiltersUI();
+      render();
+    })();
+  </script>
+</body>
+</html>
