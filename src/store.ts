@@ -1,4 +1,9 @@
 import { create } from 'zustand'
+import type { ForexPriceEntry, RawPrices } from './lib/forexTicker'
+import { mergeForexPrices } from './lib/forexTicker'
+import type { TradingSnapshot } from './lib/tradingDashboard'
+import type { BotStatus } from './lib/botStatus'
+import type { BotEdge } from './lib/botEdge'
 
 export type Phase =
   | 'offline'   // waiting for the click that unlocks audio
@@ -139,6 +144,7 @@ export type UiState = {
     toolBadge: boolean    // the active-tool readout under the reactor
     suggestions: boolean  // the "try saying…" hint
     brand: boolean        // the J.A.R.V.I.S. wordmark + status
+    ticker: boolean       // the forex price ticker
   }
   effect: UiEffect | null
 }
@@ -147,7 +153,7 @@ export const UI_DEFAULTS: UiState = {
   accent: null, background: null, palette: {},
   reactor: { color: null, scale: 1, intensity: 1, spin: 1, style: 'ring', visible: true },
   orbits: [],
-  chrome: { systems: true, transcript: true, toolBadge: true, suggestions: true, brand: true },
+  chrome: { systems: true, transcript: true, toolBadge: true, suggestions: true, brand: true, ticker: true },
   effect: null,
 }
 
@@ -240,6 +246,20 @@ type State = {
   expandedBlade: string | null
   /** JARVIS's control over his own appearance. UI_DEFAULTS == the stock look. */
   ui: UiState
+  /** Live forex prices, keyed by pair (e.g. "EUR_USD"). Empty until the
+   *  first successful poll — the ticker only renders once this is non-empty. */
+  forex: Record<string, ForexPriceEntry>
+  // Baseline is per-session by design (resets on page reload); no reset action planned until phase 3 adds real history.
+  setForexPrices: (raw: RawPrices) => void
+  /** Read-only trading status from the bridge; null until the first poll. */
+  trading: TradingSnapshot | null
+  setTrading: (snap: TradingSnapshot) => void
+  /** Read-only health of the Python forex bot from the bridge; null until the first poll. */
+  botStatus: BotStatus | null
+  setBotStatus: (botStatus: BotStatus) => void
+  /** Read-only edge-proof state of the forex bot from the bridge; null until the first poll. */
+  botEdge: BotEdge | null
+  setBotEdge: (botEdge: BotEdge) => void
 
   setVoice: (v: string) => void
   setGestures: (on: boolean) => void
@@ -259,7 +279,7 @@ type State = {
   setError: (e: string | null) => void
   setConnected: (c: string[]) => void
   pushTurn: (t: Turn) => void
-  appendToLastTurn: (text: string) => void
+  appendToLastTurn: (id: string, text: string) => void
 
   applyUi: (patch: UiPatch) => void
   addOrbit: (o: OrbitObject) => void
@@ -287,6 +307,10 @@ export const useStore = create<State>((set) => ({
   expandedBlade: null,
   bootNote: '',
   ui: defaultUi(),
+  forex: {},
+  trading: null,
+  botStatus: null,
+  botEdge: null,
 
   setVoice: (voice) => set({ voice }),
   setGestures: (gestures) => set({ gestures }),
@@ -353,11 +377,16 @@ export const useStore = create<State>((set) => ({
   setError: (error) => set({ error }),
   setConnected: (connected) => set({ connected }),
   pushTurn: (turn) => set((s) => ({ turns: [...s.turns.slice(-40), turn] })),
-  appendToLastTurn: (text) =>
+  // Targeted by id, not just "whichever turn is last" — a proactive
+  // announcement (e.g. an autonomous trade) also pushes a role:'jarvis'
+  // turn, and if one lands between two streamed deltas of an answer
+  // already in flight, appending by position alone would silently redirect
+  // the rest of that answer onto the announcement instead.
+  appendToLastTurn: (id, text) =>
     set((s) => {
       const turns = [...s.turns]
       const last = turns[turns.length - 1]
-      if (!last || last.role !== 'jarvis') return {}
+      if (!last || last.role !== 'jarvis' || last.id !== id) return {}
       turns[turns.length - 1] = { ...last, text: last.text + text }
       return { turns }
     }),
@@ -396,6 +425,12 @@ export const useStore = create<State>((set) => ({
   fireEffect: (kind) =>
     set((s) => ({ ui: { ...s.ui, effect: { kind, at: Date.now() } } })),
   resetUi: () => set({ ui: defaultUi() }),
+  // Baseline-capture/carry-forward logic lives in mergeForexPrices
+  // (src/lib/forexTicker.ts) so it can be unit-tested outside Vite.
+  setForexPrices: (raw) => set((s) => ({ forex: mergeForexPrices(s.forex, raw) })),
+  setTrading: (trading) => set({ trading }),
+  setBotStatus: (botStatus) => set({ botStatus }),
+  setBotEdge: (botEdge) => set({ botEdge }),
   // An explicit order outranks the sticky flag. `hold: 'sticky'` only ever
   // meant "survive the next turn boundary"; when someone says "clear the
   // screen", a card staying up because an earlier turn asked nicely reads as

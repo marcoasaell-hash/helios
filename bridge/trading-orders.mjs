@@ -1,0 +1,278 @@
+/**
+ * OANDA order placement/closing for live trading. Pure response-parsing
+ * and formatting helpers are exported and tested directly; the network
+ * calls that use them are appended in a later step and are not unit-tested
+ * (same reasoning as fetchPricingOnce/fetchCandlesOnce — real network
+ * calls, verified manually).
+ */
+
+import { openRemote, vetTarget, PROXY_UA } from './net.mjs'
+
+/**
+ * A 200/201 HTTP response from OANDA's order endpoint does NOT mean the
+ * order filled — the response body's transaction carries the real
+ * outcome. This is the one place that distinction is made; callers must
+ * never treat a successful HTTP status alone as "the trade happened".
+ */
+export function parseOrderResponse(json) {
+  const hasFill = Boolean(json?.orderFillTransaction)
+  const hasCancel = Boolean(json?.orderCancelTransaction)
+  const hasReject = Boolean(json?.orderRejectTransaction)
+
+  if (hasFill && (hasCancel || hasReject)) {
+    // Contradictory response — never resolve this in favor of "filled".
+    // A confirmed fill must be unambiguous, not just present alongside
+    // conflicting evidence.
+    return { filled: false, reason: 'ambiguous response (both fill and cancel/reject present)' }
+  }
+  if (hasFill) {
+    const t = json.orderFillTransaction
+    return {
+      filled: true,
+      fillPrice: Number(t.price),
+      tradeId: t.tradeOpened?.tradeID ?? null,
+    }
+  }
+  if (hasCancel) {
+    return { filled: false, reason: json.orderCancelTransaction.reason ?? 'cancelled' }
+  }
+  if (hasReject) {
+    return { filled: false, reason: json.orderRejectTransaction.rejectReason ?? 'rejected' }
+  }
+  return { filled: false, reason: 'unknown response shape' }
+}
+
+/**
+ * OANDA rejects a stop price with the wrong decimal precision for the
+ * instrument (JPY pairs: 2-3 decimals; most others: 4-5) — this must be
+ * driven by the instrument's real displayPrecision, fetched at call time,
+ * never hard-coded per pair.
+ */
+export function formatStopPrice(price, precision) {
+  if (!Number.isFinite(price)) {
+    throw new Error(`formatStopPrice: price must be a finite number, got ${price}`)
+  }
+  return price.toFixed(precision)
+}
+
+/**
+ * Deterministic per pair+signal so the SAME signal can never produce two
+ * accepted orders even if a check-then-act race slips past the in-process
+ * lock — OANDA itself rejects a duplicate clientExtensions.id, which is
+ * the real backstop, not just the in-memory guard.
+ *
+ * Truncates `signalTime` to its date (YYYY-MM-DD), which is only correct
+ * because the strategy trades on DAILY candles — one signal per pair per
+ * day is the actual invariant this enforces. If the strategy ever moves to
+ * a shorter candle granularity, this must use the full timestamp instead,
+ * or every legitimate same-day re-entry would be rejected as a duplicate.
+ */
+export function buildClientOrderId(pair, signalTime) {
+  return `jarvis-${pair}-${String(signalTime).slice(0, 10)}`
+}
+
+const FETCH_TIMEOUT_MS = 8000
+const MAX_RESPONSE_BYTES = 512 * 1024
+
+async function readJsonBody(res, maxBytes) {
+  const chunks = []
+  let size = 0
+  for await (const chunk of res) {
+    size += chunk.length
+    if (size > maxBytes) {
+      res.destroy()
+      throw new Error('oanda response too large')
+    }
+    chunks.push(chunk)
+  }
+  return JSON.parse(Buffer.concat(chunks).toString('utf8'))
+}
+
+async function oandaRequest({ host, accountId, apiKey, method, path, body }) {
+  const url = vetTarget(`${host}/v3/accounts/${encodeURIComponent(accountId)}${path}`)
+  const headers = {
+    'user-agent': PROXY_UA,
+    authorization: `Bearer ${apiKey}`,
+    accept: 'application/json',
+  }
+  if (body) headers['content-type'] = 'application/json'
+  const { res } = await openRemote(url, headers, FETCH_TIMEOUT_MS, {
+    method,
+    body: body ? JSON.stringify(body) : undefined,
+  })
+  const status = res.statusCode ?? 0
+  const json = await readJsonBody(res, MAX_RESPONSE_BYTES)
+  // OANDA's order/position endpoints return meaningful error detail in the
+  // body even on failure (validation messages, rate-limit reasons) — parsed
+  // here so it reaches the error message, not silently dropped the way a
+  // caller-side "unknown response shape" fallback would discard it.
+  if (status < 200 || status >= 300) {
+    const detail = json?.errorMessage ?? json?.rejectReason ?? JSON.stringify(json).slice(0, 200)
+    const err = new Error(`oanda request failed with status ${status}: ${detail}`)
+    err.status = status
+    throw err
+  }
+  return { status, json }
+}
+
+/**
+ * displayPrecision for one instrument, e.g. 5 for EUR_USD, 3 for USD_JPY.
+ * Fetched fresh rather than hard-coded per pair — see formatStopPrice's
+ * comment for why a wrong precision gets an order rejected outright.
+ */
+export async function fetchInstrumentPrecision({ host, accountId, apiKey, pair }) {
+  const { json } = await oandaRequest({
+    host, accountId, apiKey, method: 'GET',
+    path: `/instruments?instruments=${encodeURIComponent(pair)}`,
+  })
+  const instrument = json?.instruments?.[0]
+  return instrument?.displayPrecision ?? 5
+}
+
+/** Every currently open position, keyed by instrument. */
+export async function fetchOpenPositions({ host, accountId, apiKey }) {
+  const { json } = await oandaRequest({
+    host, accountId, apiKey, method: 'GET', path: '/openPositions',
+  })
+  const out = {}
+  for (const p of json?.positions ?? []) {
+    const longUnits = Number(p.long?.units ?? 0)
+    const shortUnits = Number(p.short?.units ?? 0)
+    if (longUnits !== 0 || shortUnits !== 0) out[p.instrument] = { longUnits, shortUnits }
+  }
+  return out
+}
+
+/** Realized + unrealized P&L for the account, in account currency. */
+export async function fetchAccountPL({ host, accountId, apiKey }) {
+  const { json } = await oandaRequest({ host, accountId, apiKey, method: 'GET', path: '' })
+  return {
+    // No `?? 0` fallback: Number(undefined) is NaN, which correctly flows
+    // into checkDailyLossHalt's fail-closed NaN guard. Defaulting a missing
+    // field to 0 would silently convert "I don't know the P&L" into "the
+    // P&L is zero", defeating that guard.
+    unrealizedPL: Number(json?.account?.unrealizedPL),
+    realizedPL: Number(json?.account?.pl),
+  }
+}
+
+/**
+ * Places a long market order with a stop-loss attached. Returns
+ * parseOrderResponse's result — callers must check `.filled` before
+ * treating the trade as real; see parseOrderResponse's doc comment.
+ *
+ * The stop is attached by DISTANCE, not absolute price: OANDA's
+ * StopLossDetails supports a `distance` field, which prices the stop
+ * relative to wherever this FOK market order actually fills, rather than
+ * off a possibly-stale candle close. Verified 2026-09-16 against a real
+ * OANDA practice account: a 10-unit EUR_USD order with a `distance`-based
+ * stop filled, and fetchOpenTradesStopLossStatus immediately confirmed the
+ * stop-loss was attached — see docs/superpowers/plans/2026-09-14-forex-trading.md
+ * Task 12 verification notes.
+ */
+export async function placeMarketOrder({ host, accountId, apiKey, pair, units, stopLossDistance, clientOrderId }) {
+  if (!Number.isFinite(units) || units <= 0) {
+    throw new Error(`placeMarketOrder: units must be a positive finite number, got ${units}`)
+  }
+  const { json } = await oandaRequest({
+    host, accountId, apiKey, method: 'POST', path: '/orders',
+    body: {
+      order: {
+        type: 'MARKET',
+        instrument: pair,
+        units: String(Math.abs(Math.round(units))),
+        timeInForce: 'FOK',
+        positionFill: 'DEFAULT',
+        stopLossOnFill: { distance: stopLossDistance },
+        clientExtensions: { id: clientOrderId },
+      },
+    },
+  })
+  return parseOrderResponse(json)
+}
+
+/**
+ * A 200 from OANDA's close-position endpoint does NOT mean the close
+ * confirmed — the response body carries `longOrderFillTransaction` on a
+ * real close, or `longOrderCancelTransaction`/an error shape if it didn't
+ * go through (verified against a real OANDA practice account: a confirmed
+ * close's response includes `longOrderFillTransaction`). Callers must
+ * check `.closed` before treating the position as actually flat — a
+ * rejected close journaled/announced as "closed" would be exactly the
+ * kind of false confirmation the entry-side fill parsing was built to
+ * avoid.
+ */
+export function parseCloseResponse(json) {
+  if (json?.longOrderFillTransaction) return { closed: true }
+  if (json?.longOrderCancelTransaction) {
+    return { closed: false, reason: json.longOrderCancelTransaction.reason ?? 'cancelled' }
+  }
+  if (json?.errorMessage) return { closed: false, reason: json.errorMessage }
+  return { closed: false, reason: 'unknown response shape' }
+}
+
+/** Closes the entire long position for one instrument. Returns
+ *  parseCloseResponse's result — callers must check `.closed` before
+ *  treating the position as flat; see parseCloseResponse's doc comment. */
+export async function closeLongPosition({ host, accountId, apiKey, pair }) {
+  const { json } = await oandaRequest({
+    host, accountId, apiKey, method: 'PUT',
+    path: `/positions/${encodeURIComponent(pair)}/close`,
+    body: { longUnits: 'ALL' },
+  })
+  return parseCloseResponse(json)
+}
+
+/**
+ * Pure aggregation: given OANDA's raw trades and pending-orders responses,
+ * compute per-instrument stop-loss protection status. Split out from
+ * fetchOpenTradesStopLossStatus specifically so this logic — which
+ * determines whether the bot believes a live position is protected — can
+ * be unit-tested without a network call.
+ */
+export function aggregateStopLossStatus(tradesJson, ordersJson) {
+  const stopLossTradeIds = new Set(
+    (ordersJson?.orders ?? [])
+      .filter((o) => o.type === 'STOP_LOSS')
+      .map((o) => o.tradeID),
+  )
+  const out = {}
+  for (const trade of tradesJson?.trades ?? []) {
+    const protectedNow = stopLossTradeIds.has(trade.id)
+    const existing = out[trade.instrument]
+    // If this instrument has more than one open trade, it's only
+    // considered protected when EVERY trade on it has a stop — one
+    // unprotected trade must not be masked by another that does.
+    out[trade.instrument] = {
+      tradeId: trade.id,
+      hasStopLoss: existing ? existing.hasStopLoss && protectedNow : protectedNow,
+    }
+  }
+  return out
+}
+
+/**
+ * Every currently open trade, with whether OANDA confirms a stop-loss
+ * order attached to it. This is the real source of truth for "is this
+ * position protected" — never assume from in-memory state, which starts
+ * empty on every process boot and would otherwise flag every position
+ * (even ones this same bot protected correctly moments ago) as unprotected
+ * on every restart.
+ *
+ * Verified 2026-09-16 against a real OANDA practice account: after a live
+ * fill, this correctly reported `hasStopLoss: true` for the new trade,
+ * confirming both the `openTrades` trade shape and the `pendingOrders`
+ * STOP_LOSS order's `tradeID` linkage assumed below are correct.
+ */
+export async function fetchOpenTradesRaw({ host, accountId, apiKey }) {
+  const { json } = await oandaRequest({ host, accountId, apiKey, method: 'GET', path: '/openTrades' })
+  return json
+}
+
+export async function fetchOpenTradesStopLossStatus({ host, accountId, apiKey }) {
+  const [tradesRes, ordersRes] = await Promise.all([
+    oandaRequest({ host, accountId, apiKey, method: 'GET', path: '/openTrades' }),
+    oandaRequest({ host, accountId, apiKey, method: 'GET', path: '/pendingOrders' }),
+  ])
+  return aggregateStopLossStatus(tradesRes.json, ordersRes.json)
+}

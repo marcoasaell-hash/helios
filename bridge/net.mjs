@@ -170,10 +170,10 @@ export function vetTarget(raw) {
 }
 
 /** One hop. Resolves with the IncomingMessage once headers are in. */
-export function requestOnce(url, headers, timeoutMs) {
+export function requestOnce(url, headers, timeoutMs, { method = 'GET', body } = {}) {
   return new Promise((resolve, reject) => {
     const req = (url.protocol === 'https:' ? httpsRequest : httpRequest)(url, {
-      method: 'GET',
+      method,
       headers,
       // The SSRF gate. Everything else here is plumbing.
       lookup: guardedLookup,
@@ -203,8 +203,15 @@ export function requestOnce(url, headers, timeoutMs) {
             : proxyError(502, 'upstream unreachable'),
       )
     })
-    req.end()
+    if (body !== undefined) req.end(body)
+    else req.end()
   })
+}
+
+/** True only for an exact scheme+host+port match — the bar a redirect must
+ *  clear to keep carrying the original request's secrets. */
+export function sameOrigin(a, b) {
+  return a.protocol === b.protocol && a.hostname === b.hostname && a.port === b.port
 }
 
 /**
@@ -212,11 +219,22 @@ export function requestOnce(url, headers, timeoutMs) {
  * every hop has to be vetted again: a public URL that 302s to
  * http://169.254.169.254/ is the whole SSRF attack, and a redirect to
  * file:// or data: is the other half of it.
+ *
+ * A same-origin redirect (rare in practice — none of this bridge's own
+ * callers' hosts are expected to redirect at all) replays the original
+ * headers and body unchanged. A cross-origin redirect strips any
+ * `authorization` header and drops the body/method (falling back to a plain
+ * GET) before following it — this is what stops an Authorization header
+ * carrying an OANDA API key, or a request body carrying order-placement
+ * details, from being silently forwarded to a different host than the one
+ * the caller actually asked to talk to.
  */
-export async function openRemote(startUrl, headers, timeoutMs) {
+export async function openRemote(startUrl, headers, timeoutMs, options) {
   let url = startUrl
+  let activeHeaders = headers
+  let activeOptions = options
   for (let hop = 0; ; hop++) {
-    const res = await requestOnce(url, headers, timeoutMs)
+    const res = await requestOnce(url, activeHeaders, timeoutMs, activeOptions)
     const status = res.statusCode ?? 0
     const location = res.headers.location
     if (status >= 300 && status < 400 && location) {
@@ -230,7 +248,13 @@ export async function openRemote(startUrl, headers, timeoutMs) {
       }
       // vetTarget re-runs the scheme and host checks; guardedLookup re-runs the
       // address check when the next hop connects.
-      url = vetTarget(next.href)
+      const vetted = vetTarget(next.href)
+      if (!sameOrigin(url, vetted)) {
+        const { authorization, Authorization, ...rest } = activeHeaders ?? {}
+        activeHeaders = rest
+        activeOptions = undefined // drop method/body — follow as a plain GET
+      }
+      url = vetted
       continue
     }
     return { res, url }

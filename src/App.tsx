@@ -22,6 +22,7 @@ import {
   watchServers,
   watchPanels,
   watchBlades,
+  watchAnnounce,
   watchCapture,
   watchUi,
   watchConnection,
@@ -31,6 +32,10 @@ import {
 } from './lib/brain'
 import { startAnalyser, micLevel } from './lib/audio'
 import { probeCapabilities } from './lib/capabilities'
+import { startForexPolling } from './lib/forexTicker'
+import { startTradingPolling, FIXTURE_TRADING_SNAPSHOT, type TradingSnapshot } from './lib/tradingDashboard'
+import { startBotPolling, fixtureBotStatus } from './lib/botStatus'
+import { startEdgePolling } from './lib/botEdge'
 import { env } from './config'
 
 /**
@@ -159,7 +164,7 @@ export default function App() {
             music.working(false)
             store.getState().pushTurn({ id: turnId, role: 'jarvis', text: '' })
           }
-          store.getState().appendToLastTurn(delta)
+          store.getState().appendToLastTurn(turnId, delta)
           spk.push(delta)
         },
         onTool: (name) => {
@@ -364,6 +369,13 @@ export default function App() {
     watchServers((servers) => store.getState().setConnected(servers))
     watchPanels((panel) => store.getState().pushPanel(panel))
     watchBlades((blade) => store.getState().pushBlade(blade))
+    watchAnnounce((text) => {
+      store.getState().pushTurn({ id: newId(), role: 'jarvis', text })
+      silence()
+      const spk = createSpeaker()
+      speaker.current = spk
+      spk.say(text)
+    })
 
     /**
      * JARVIS asking to see something.
@@ -526,6 +538,47 @@ export default function App() {
 
     store.getState().setPhase('dormant')
   }
+
+  // Forex prices poll independently of the voice/power state — the ticker is
+  // a passive HUD readout, not something the wake word gates.
+  useEffect(() => {
+    const stop = startForexPolling((prices) => store.getState().setForexPrices(prices))
+    return stop
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Read-only trading panel. DEV-only `?tradingFixture=1` shows sample data so
+  // the panel is viewable without broker credentials.
+  useEffect(() => {
+    if (import.meta.env.DEV && location.search.includes('tradingFixture=')) {
+      // Re-stamp so the staleness check doesn't dim the fixture.
+      // `tradingFixture=stale` uses a year-2000 timestamp, to view the STALE state.
+      const stamp = () => (location.search.includes('tradingFixture=stale') ? '2000-01-01T00:00:00.000Z' : new Date().toISOString())
+      const push = () => store.getState().setTrading({ ...FIXTURE_TRADING_SNAPSHOT, at: stamp() } as TradingSnapshot)
+      push()
+      const t = setInterval(push, 10_000)
+      return () => clearInterval(t)
+    }
+    return startTradingPolling((snap) => store.getState().setTrading(snap))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Read-only forex bot health pill. DEV-only `?botFixture=ok|warn|crit|unknown|stale`
+  // shows sample data so the pill is viewable without a bot.
+  useEffect(() => {
+    if (import.meta.env.DEV && location.search.includes('botFixture=')) {
+      const kind = new URLSearchParams(location.search).get('botFixture') ?? 'ok'
+      const push = () => store.getState().setBotStatus(fixtureBotStatus(kind))
+      push()
+      const t = setInterval(push, 10_000)
+      return () => clearInterval(t)
+    }
+    return startBotPolling((s) => store.getState().setBotStatus(s))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Read-only edge-proof panel; hidden until the bridge reports the bot configured.
+  useEffect(() => startEdgePolling((e) => store.getState().setBotEdge(e)), [])
 
   // -- clap to start --------------------------------------------------------
 

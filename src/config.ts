@@ -6,6 +6,17 @@
  */
 
 /**
+ * Outside Vite (e.g. this file imported by a plain Node test runner),
+ * `import.meta.env` doesn't exist at all. Defining it as an empty object
+ * lets every `import.meta.env.X` read below behave exactly like an unset
+ * env var — the existing `str`/`choice`/`flag` helpers already treat
+ * `undefined` as "not set" — without touching any of the reads themselves.
+ */
+if (typeof import.meta.env === 'undefined') {
+  Object.defineProperty(import.meta, 'env', { value: {}, writable: true, configurable: true })
+}
+
+/**
  * Vite inlines a blank `.env` entry as an empty string, not as undefined, so
  * `??` never falls through to the default — and .env.example ships every
  * optional key blank, which is exactly the shape that used to bite. A blank
