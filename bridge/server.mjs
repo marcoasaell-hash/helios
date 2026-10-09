@@ -1236,6 +1236,15 @@ wss.on('connection', (socket) => {
       // The cost is that MCP servers stop being discovered too, which is why
       // mcpServers above passes them in by hand.
       settingSources: [],
+      // The SDK auto-fetches every claude.ai cloud connector on the account
+      // regardless of settingSources — Canva, Figma, Gamma, Lovable, Netlify,
+      // Supabase, Gmail, Google Drive, the lot — and tries to connect each one
+      // before the first turn can run. Most aren't usable headlessly (no
+      // browser to complete OAuth, local apps not running), so this was
+      // costing every new session ~15s of dead silence for servers that were
+      // going to fail anyway. mcpServers above is the only server list that
+      // should apply here.
+      settings: { disableClaudeAiConnectors: true },
       // Stated explicitly, and it has to be.
       //
       // With no `model` here the SDK falls back to its own default, which on
