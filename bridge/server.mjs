@@ -27,6 +27,13 @@ import { readFile, realpath, stat } from 'node:fs/promises'
 import { isAbsolute, join, relative, resolve as resolvePath } from 'node:path'
 import { openRemote, proxyError, vetTarget, PROXY_UA } from './net.mjs'
 import { probeUrl, renderPage } from './page.mjs'
+import { hermesSession } from './hermes.mjs'
+
+// Load .env.local (gitignored) so ELEVENLABS_API_KEY / JARVIS_VOICE_ID can live
+// in one file instead of the shell environment. Real env vars still win.
+try {
+  process.loadEnvFile(new URL('../.env.local', import.meta.url))
+} catch {}
 
 const PORT = Number(process.env.JARVIS_BRIDGE_PORT ?? 8787)
 
@@ -103,6 +110,15 @@ const ALLOW_WRITES = process.env.JARVIS_ALLOW_WRITES === '1'
  * — claude-sonnet-5 is noticeably snappier on camera if Opus feels slow.
  */
 const MODEL = process.env.JARVIS_MODEL ?? 'claude-opus-5'
+
+/**
+ * Which brain answers: 'claude' (Claude Code via the Agent SDK, the default)
+ * or 'hermes' (a Hermes Agent API server — see bridge/hermes.mjs).
+ */
+const BRAIN = (process.env.JARVIS_BRAIN ?? 'claude').toLowerCase()
+const HERMES_URL = process.env.HERMES_URL ?? 'http://localhost:8642/v1'
+const HERMES_API_KEY = process.env.HERMES_API_KEY ?? ''
+const HERMES_MODEL = process.env.HERMES_MODEL ?? 'hermes-agent'
 
 /**
  * How hard the model thinks before answering.
@@ -291,6 +307,14 @@ function decideTool(name) {
 }
 
 const SYSTEM_PROMPT = `You are JARVIS. You are speaking out loud to one person.
+
+LANGUAGE. You always speak German (Deutsch), whatever language these
+instructions are written in. Every rule below applies to your German: the
+English example lines show the register, not the words to use. Address the user
+as "Sir". Use the formal "Sie", never "du". British reserve carries over as
+precise, understated Hochdeutsch: "Ich fürchte" for bad news, "Sehr wohl, Sir"
+for understood, "Soll ich" for offers. Numbers, dates and times written out the
+way they are spoken in German.
 
 LENGTH. Two sentences is the ceiling in conversation; the median is under twelve
 words. Every word is read aloud and the user waits in silence while it plays, so
@@ -856,6 +880,7 @@ const handleRequest = async (req, res) => {
             // Flash is the low-latency model — a conversation needs speed more
             // than it needs the last few percent of quality.
             model_id: 'eleven_flash_v2_5',
+            language_code: 'de',
             voice_settings: {
               stability: 0.4,
               similarity_boost: 0.75,
@@ -937,6 +962,10 @@ const handleRequest = async (req, res) => {
             : 'webm'
       const form = new FormData()
       form.append('model_id', 'scribe_v1')
+      form.append('language_code', 'deu')
+      // No "[Klick]" / "[niest]" / "(Musik)" annotations: they arrived as
+      // questions and cut off the answer in flight.
+      form.append('tag_audio_events', 'false')
       form.append(
         'file',
         new Blob([Buffer.concat(chunks)], { type }),
@@ -954,7 +983,13 @@ const handleRequest = async (req, res) => {
       }
       const data = await upstream.json()
       res.writeHead(200, { ...cors, 'content-type': 'application/json' })
-      return res.end(JSON.stringify({ text: (data.text ?? '').trim() }))
+      const cleaned = (data.text ?? '')
+        .replace(/\[[^\]]*\]|\([^)]*\)/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+      // Nothing but punctuation left means nothing was said.
+      const text = /\p{L}/u.test(cleaned) ? cleaned : ''
+      return res.end(JSON.stringify({ text }))
     } catch (err) {
       res.writeHead(502, cors)
       return res.end(String(err?.message ?? err))
@@ -1004,7 +1039,12 @@ console.log(`[jarvis] bridge listening on ws://localhost:${PORT}`)
 console.log(
   `[jarvis] speech ${elevenKey() ? 'via ElevenLabs (key from MCP config)' : 'using browser fallback voice'}`,
 )
-console.log(`[jarvis] model ${MODEL} · effort ${EFFORT}`)
+console.log(
+  BRAIN === 'hermes'
+    ? `[jarvis] brain: Hermes Agent at ${HERMES_URL} · model ${HERMES_MODEL}` +
+        ' (its own tools and permissions — JARVIS_ALLOW_WRITES does not apply)'
+    : `[jarvis] model ${MODEL} · effort ${EFFORT}`,
+)
 console.log(
   `[jarvis] writes ${ALLOW_WRITES ? 'ENABLED' : 'disabled'}` +
     (ALLOW_WRITES ? '' : ' — set JARVIS_ALLOW_WRITES=1 to permit shell/file/device actions'),
@@ -1031,7 +1071,14 @@ console.log(
  * What to tell the browser when a turn ends badly. Plain sentences, because
  * whatever reaches the client is liable to be spoken.
  */
+/** The persona alone — everything before the blade/tool instructions. */
+const HERMES_PROMPT =
+  SYSTEM_PROMPT.split('The blades — the ONLY surface')[0].trim() +
+  '\n\nYou have no screen to show things on here: everything you say is ' +
+  'spoken, so describe results briefly instead of displaying them.'
+
 const RESULT_FAILURES = {
+  error_hermes: 'Hermes did not answer. The connection to the agent failed.',
   error_during_execution: 'The turn failed part way through.',
   error_max_turns: 'The turn ran too long and was stopped.',
   error_max_budget_usd: 'The budget for this turn ran out.',
@@ -1190,7 +1237,14 @@ wss.on('connection', (socket) => {
     if (!failed) sendTurn({ type: 'tool', name })
   }
 
-  const session = query({
+  const session = BRAIN === 'hermes'
+    ? hermesSession(userMessages(), {
+        url: HERMES_URL,
+        apiKey: HERMES_API_KEY,
+        model: HERMES_MODEL,
+        systemPrompt: HERMES_PROMPT,
+      })
+    : query({
     prompt: userMessages(),
     options: {
       // Everything Claude Code has configured, plus the HUD as an in-process
@@ -1419,6 +1473,7 @@ wss.on('connection', (socket) => {
        */
       const text = msg.text
       const id = typeof msg.id === 'string' ? msg.id : null
+      console.log(`[jarvis] ask: ${JSON.stringify(text.slice(0, 120))}`)
       void settling.then(() => {
         answering = id
         if (deliver) {
@@ -1441,6 +1496,7 @@ wss.on('connection', (socket) => {
     }
 
     if (msg.type === 'interrupt') {
+      console.log('[jarvis] interrupt from browser')
       // Held so the next question can wait for it rather than racing it.
       const stopped = turnFinished()
       settling = Promise.resolve(session.interrupt?.())

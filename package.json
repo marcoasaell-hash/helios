@@ -16,7 +16,8 @@
     "preview": "vite preview",
     "bridge": "node bridge/server.mjs",
     "bridge:writes": "JARVIS_ALLOW_WRITES=1 node bridge/server.mjs",
-    "setup": "node scripts/setup.mjs"
+    "setup": "node scripts/setup.mjs",
+    "stop": "pkill -f \"node scripts/start.mjs\"; pkill -f \"node bridge/server.mjs\"; pkill -f \"node_modules/vite/bin/vite.js\"; echo JARVIS gestoppt"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.220",

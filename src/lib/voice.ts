@@ -78,7 +78,7 @@ const WAKE_DEBOUNCE = 1500
  * indication why. Better a rare false wake than a name that does not answer.
  */
 const WAKE =
-  /\b(?:hey|hi|ok|okay|yo)?\s*(?:jarvis|jarvys|jervis|jarvis's|travis|jarviss|java's|jarv)\b(?!'s)/i
+  /\b(?:hey|hi|hallo|ok|okay|yo)?\s*(?:jarvis|jarvys|jervis|jarwis|tschawis|dschavis|jarvis's|travis|jarviss|java's|jarv)\b(?!'s)/i
 
 /** Everything after the wake phrase, which is usually the actual command. */
 function afterWake(text: string): string {
@@ -267,7 +267,7 @@ const norm = (s: string) =>
  * would be the single most infuriating failure this file could have.
  */
 const OVERRIDE =
-  /\b(stop|wait|jarvis|cancel|enough|quiet|hold on|shut up|never ?mind|forget it|no)\b/i
+  /\b(stop|stopp|wait|warte|halt|jarvis|cancel|abbrechen|enough|genug|quiet|ruhe|hold on|shut up|never ?mind|forget it|vergiss es|no|nein)\b/i
 
 /**
  * Words too common to be evidence of anything.
@@ -481,6 +481,26 @@ async function startElevenVoice(h: VoiceHandlers): Promise<Voice> {
       diag.heard = said
       diag.heardAt = Date.now()
 
+      // The barge-in, on evidence: real words while he is thinking or talking.
+      // Two words, or one override word ("stopp"), so a stray "ja" from across
+      // the room does not throw his answer away.
+      if (mode === 'guard') {
+        const words = said.split(/\s+/).filter(Boolean).length
+        const since = speakingSince()
+        if (!OVERRIDE.test(said)) {
+          if (since && Date.now() - since < SELF_GUARD_MS) {
+            diag.selfGuarded++
+            drop('his own first syllable')
+            return
+          }
+          if (words < 2) {
+            drop(`"${said}" — too short to interrupt`)
+            return
+          }
+        }
+        h.onSpeechStart()
+      }
+
       if (mode === 'wake') {
         if (WAKE.test(said) && Date.now() - lastWake > WAKE_DEBOUNCE) {
           lastWake = Date.now()
@@ -529,14 +549,9 @@ async function startElevenVoice(h: VoiceHandlers): Promise<Voice> {
       // The barge-in. In guard mode the user has started talking over him, and
       // because the guard threshold is high this is a real interruption rather
       // than leaked playback — so cut him off now, do not wait for the words.
-      if (mode === 'guard') {
-        const since = speakingSince()
-        if (since && Date.now() - since < SELF_GUARD_MS) {
-          diag.selfGuarded++
-          return
-        }
-        h.onSpeechStart()
-      }
+      // Barge-in no longer fires here on loudness alone: a click, a sneeze or
+      // voices in the room were cancelling every answer in flight. It fires in
+      // transcribe() once real words have come back — see `bargeIn`.
     },
     onEnd: (blob) => {
       pendingAudio.push(blob)
@@ -760,7 +775,7 @@ function startBrowserVoice(h: VoiceHandlers): Voice {
     rec = new Ctor()
     rec.continuous = true
     rec.interimResults = true
-    rec.lang = 'en-GB'
+    rec.lang = 'de-DE'
     rec.onstart = () => {
       running = true
       diag.running = true

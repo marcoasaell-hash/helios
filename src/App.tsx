@@ -596,7 +596,7 @@ export default function App() {
         silence()
         const demo = createSpeaker()
         speaker.current = demo
-        demo.say(`Voice set to ${name.replace(/\(.*?\)/g, '').trim()}. At your service, sir.`)
+        demo.say(`Stimme gewechselt zu ${name.replace(/\(.*?\)/g, '').trim()}. Zu Diensten, Sir.`)
         void demo.end()
         return
       }
@@ -638,7 +638,7 @@ export default function App() {
         silence()
         const t = createSpeaker()
         speaker.current = t
-        t.say('Audio test. If you can hear this, speech output is working, sir.')
+        t.say('Audiotest. Wenn Sie das hören, funktioniert die Sprachausgabe, Sir.')
         void t.end().then(() => {
           const d = (window as unknown as Record<string, Record<string, unknown>>).__tts
           console.info('[jarvis] audio test →', d)

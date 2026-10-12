@@ -398,7 +398,7 @@ export async function ask(
     const arm = () => {
       clearTimeout(timer)
       timer = window.setTimeout(() => {
-        fail(new Error('The bridge went quiet — that turn was lost, sir.'))
+        fail(new Error('Die Verbindung ist abgerissen, Sir. Diese Anfrage ging verloren.'))
       }, IDLE_TIMEOUT_MS)
     }
 
