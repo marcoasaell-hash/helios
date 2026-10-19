@@ -32,6 +32,7 @@ import {
 import { startAnalyser, micLevel } from './lib/audio'
 import { probeCapabilities } from './lib/capabilities'
 import { env } from './config'
+import { DesktopDock } from './ui/DesktopDock'
 
 /**
  * The conversation.
@@ -702,6 +703,7 @@ export default function App() {
       <Boot />
       <Diagnostics />
       <Ignition onStart={() => void powerOn()} />
+      <DesktopDock onCommand={(text) => void respond(text)} />
     </>
   )
 }

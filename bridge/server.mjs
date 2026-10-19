@@ -21,6 +21,9 @@ import { displayServer } from './panels.mjs'
 import { uiServer } from './ui.mjs'
 import { chromeAvailable, chromeServer } from './chrome.mjs'
 import { visionServer } from './vision.mjs'
+import { desktopServer } from './desktop.mjs'
+import { memoryServer, rememberTurn } from './memory.mjs'
+import { browserServer } from './browser.mjs'
 import { homedir, tmpdir } from 'node:os'
 import { readFileSync, realpathSync } from 'node:fs'
 import { readFile, realpath, stat } from 'node:fs/promises'
@@ -29,6 +32,8 @@ import { openRemote, proxyError, vetTarget, PROXY_UA } from './net.mjs'
 import { probeUrl, renderPage } from './page.mjs'
 
 const PORT = Number(process.env.JARVIS_BRIDGE_PORT ?? 8787)
+console.log(`[jarvis] DEBUG: JARVIS_BRIDGE_PORT from process.env: ${process.env.JARVIS_BRIDGE_PORT}`)
+console.log(`[jarvis] DEBUG: Calculated PORT: ${PORT}`)
 
 /**
  * A crash here takes the whole assistant down mid-sentence, and most of what
@@ -75,6 +80,10 @@ const isDevPort = (port) =>
   (port >= 5173 && port <= 5199) || (port >= 4173 && port <= 4199)
 
 function originAllowed(origin) {
+  if (
+    process.env.JARVIS_DESKTOP_APP === '1' &&
+    (!origin || origin === 'null' || origin.startsWith('file://'))
+  ) return true
   if (!origin) return ALLOW_NO_ORIGIN
   if (EXTRA_ORIGINS.has(origin.replace(/\/+$/, ''))) return true
   let url
@@ -279,6 +288,18 @@ function decideTool(name) {
     // indicator the user can see for as long as it is live.
     if (server === 'jarvis_eyes') return true
 
+    // Local desktop reads and persistent memory are safe in either mode. The
+    // desktop server only exposes effectful tools when writes are enabled, but
+    // this branch also prevents names such as desktop_read_file from being
+    // mistaken for unknown MCP actions by the generic verb gate.
+    if (server === 'jarvis_desktop') {
+      return /^(desktop_(list|search|read)_|memory_)/i.test(mcpToolOf(name)) || ALLOW_WRITES
+    }
+    if (server === 'jarvis_memory') return true
+    if (server === 'jarvis_browser') {
+      return /^(browser_(status|read|page_text|search|find|screenshot|tabs?|current_url))$/i.test(mcpToolOf(name)) || ALLOW_WRITES
+    }
+
     const tool = mcpToolOf(name)
     if (EFFECTFUL_VERB.test(tool) && !VETO_EXEMPT.has(`${server}__${tool}`)) {
       return ALLOW_WRITES
@@ -407,6 +428,31 @@ browser or a web page:
 - Before anything that sends, buys, deletes or posts, say in one sentence what
   you are about to do. After it, say what happened.
 - If the browser is unreachable, say so once and carry on without it.
+- On Windows, if the Chrome extension is unavailable, use the local
+  \`browser_*\` tools. They open a dedicated signed-in browser profile; the user
+  may need to sign in to Gmail or WhatsApp Web once. Use \`browser_read_page\`
+  before clicking and never send a message without stating its recipient and
+  contents first.
+
+The desktop — use the \`desktop_*\` tools for the user's Windows machine:
+- \`desktop_open_app\` opens installed applications such as Chrome, Edge,
+  WhatsApp, Outlook, Calculator, Notepad, Explorer, Paint, or VS Code.
+- \`desktop_open_url\` opens an explicit web address in the default browser.
+  For research, use web search first; open a browser page when the user asks to
+  see it or when a signed-in page is needed.
+- \`desktop_list_directory\`, \`desktop_search_files\`, and
+  \`desktop_read_file\` inspect local data. \`desktop_write_file\`, move, copy,
+  create, and delete perform the requested file actions.
+- Never guess a path. Search or list first when the user has not supplied an
+  exact location. Before deleting, state exactly what will be deleted; never
+  recursively delete a folder unless the user clearly asked for that folder.
+
+Persistent memory:
+- Use \`memory_search\` when the user refers to an earlier conversation,
+  preference, person, decision, or unfinished task. It is local and survives
+  restarts. Do not invent a memory when the search returns nothing.
+- After a successful exchange, the system stores it automatically; do not claim
+  to have stored anything unless asked.
 
 Your eyes:
 - \`look\` takes one frame and lets you see it. \`watch\` takes several seconds and
@@ -434,7 +480,7 @@ Using tools:
 - Never speak a file path, URL, ID or raw JSON aloud unless asked. Summarise.
 - Never append a sources list, citations, or markdown links. Every word you write
   is read out loud, and a URL becomes "aitch tee tee pee colon slash slash".
-  Put the source in the panel as a short tag like "REUTERS" instead.
+- Put the source in the panel as a short tag like "REUTERS" instead.
 - If a tool fails or isn't connected, one plain sentence saying so.
 - If you don't know, say you don't know.`
 
@@ -457,7 +503,7 @@ function elevenKey() {
   }
 }
 
-const VOICE_ID = process.env.JARVIS_VOICE_ID ?? 'JBFqnCBsd6RMkjVDRZzb'
+const VOICE_ID = process.env.JARVIS_VOICE_ID ?? 'Iqh4r3CPhQwBblCkKe0a'
 
 /**
  * Where /file is permitted to read from, and how big a read may get.
@@ -1017,14 +1063,14 @@ void chromeAvailable().then((ok) => {
   console.log(
     ok
       ? `[jarvis] browser control ready${ALLOW_WRITES ? '' : ' (reading only — clicking and typing need JARVIS_ALLOW_WRITES=1)'}`
-      : '[jarvis] browser control unavailable — open Chrome with the Claude extension enabled',
+      : `[jarvis] browser control unavailable — open Chrome with the Claude extension enabled`,
   )
 })
 
 console.log(
-  '[jarvis] accepting local dev origins' +
+  `[jarvis] accepting local dev origins` +
     (EXTRA_ORIGINS.size ? ` plus ${[...EXTRA_ORIGINS].join(', ')}` : '') +
-    (ALLOW_NO_ORIGIN ? ' and clients that send no origin' : ''),
+    (ALLOW_NO_ORIGIN ? ' and clients that send no origin' : '')
 )
 
 /**
@@ -1084,6 +1130,7 @@ wss.on('connection', (socket) => {
    * listener over there has already heard.
    */
   let answering = null
+  let currentTurnText = ''
   const sendTurn = (msg) => send({ ...msg, ask: answering })
 
   /**
@@ -1214,6 +1261,9 @@ wss.on('connection', (socket) => {
         jarvis_chrome: chromeServer({ allowWrites: ALLOW_WRITES }),
         // The camera, which unlike everything else here has to ask and wait.
         jarvis_eyes: visionServer(ask),
+        jarvis_desktop: desktopServer({ allowWrites: ALLOW_WRITES }),
+        jarvis_memory: memoryServer(),
+        jarvis_browser: browserServer({ allowWrites: ALLOW_WRITES }),
       },
       // A plain system prompt, not the claude_code preset. The preset is
       // tuned for a coding agent — verbose, file-oriented, and a large chunk
@@ -1275,7 +1325,7 @@ wss.on('connection', (socket) => {
                 ' actions that change anything. Tell the user this action is' +
                 ' unavailable until they enable write access on the machine.',
             }
-      },
+          },
     },
   })
 
@@ -1343,9 +1393,11 @@ wss.on('connection', (socket) => {
             // nothing to say — the HUD stops spinning and JARVIS stands there
             // silent. Say what happened instead.
             if (msg.subtype === 'success') {
+              const finalText = msg.result ?? ''
+              if (currentTurnText && finalText) void rememberTurn(currentTurnText, finalText)
               sendTurn({
                 type: 'done',
-                text: msg.result ?? '',
+                text: finalText,
                 costUsd: msg.total_cost_usd ?? null,
               })
             } else {
@@ -1376,9 +1428,9 @@ wss.on('connection', (socket) => {
                 .filter((s) => s.status !== 'needs-auth' && s.status !== 'failed')
                 .map((s) => s.name)
               send({ type: 'ready', servers: usable })
-              console.log(`[jarvis] ${usable.length} MCP servers available`)
-            }
-            break
+               console.log(`[jarvis] ${usable.length} MCP servers available`)
+             }
+             break
         }
       }
     } catch (err) {
@@ -1418,6 +1470,7 @@ wss.on('connection', (socket) => {
        * already-resolved promise — and removes the cross-talk when there is.
        */
       const text = msg.text
+      currentTurnText = text
       const id = typeof msg.id === 'string' ? msg.id : null
       void settling.then(() => {
         answering = id
@@ -1459,5 +1512,6 @@ wss.on('connection', (socket) => {
     closed = true
     deliver?.(null)
     session.close?.()
+    socket.close()
   })
 })
