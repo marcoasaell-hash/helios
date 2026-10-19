@@ -1886,6 +1886,131 @@ kbd {
   .ignition-ring { animation: none }
 }
 
+/* ---------------------------------------------------------------------------
+   Desktop command dock
+
+   The reactor remains the centre of the experience. This dock is the practical
+   edge of the agent: a keyboard fallback, native-runtime status, and the small
+   amount of background/tray configuration a desktop app needs.
+   --------------------------------------------------------------------------- */
+.desktop-dock {
+  position: fixed;
+  right: 28px;
+  bottom: 22px;
+  z-index: 12;
+  width: min(430px, calc(100vw - 56px));
+  padding: 10px 11px 8px;
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent);
+  background: linear-gradient(145deg, rgba(4, 18, 25, 0.9), rgba(1, 7, 12, 0.78));
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.42), 0 0 24px color-mix(in srgb, var(--accent) 12%, transparent);
+  backdrop-filter: blur(16px);
+  pointer-events: auto;
+  text-transform: uppercase;
+}
+
+.desktop-dock-head,
+.desktop-dock-meta,
+.desktop-settings-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.desktop-dock-head { min-height: 18px; }
+.desktop-live {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #4fffc2;
+  box-shadow: 0 0 10px #4fffc2;
+}
+.desktop-dock-title { font-size: 9px; letter-spacing: 0.22em; }
+.desktop-dock-state { margin-left: auto; font-size: 8px; opacity: 0.45; letter-spacing: 0.12em; }
+.desktop-dock-btn,
+.desktop-close {
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+}
+.desktop-dock-btn { padding: 2px 3px; font-size: 15px; line-height: 1; }
+.desktop-command {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  border-top: 1px solid color-mix(in srgb, var(--accent) 14%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 14%, transparent);
+  padding: 7px 0;
+}
+.desktop-command-mark { font-size: 18px; color: var(--accent); opacity: 0.78; }
+.desktop-command input {
+  min-width: 0;
+  flex: 1;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: #ecfbff;
+  font: 12px 'Chakra Petch', system-ui, sans-serif;
+  text-transform: none;
+  letter-spacing: 0.02em;
+}
+.desktop-command input::placeholder { color: rgba(218, 248, 251, 0.38); }
+.desktop-command button,
+.desktop-settings-foot button {
+  border: 1px solid color-mix(in srgb, var(--accent) 34%, transparent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  color: color-mix(in srgb, var(--accent) 88%, white);
+  font: inherit;
+  font-size: 8px;
+  letter-spacing: 0.16em;
+  padding: 5px 7px;
+  cursor: pointer;
+}
+.desktop-command button:hover,
+.desktop-settings-foot button:hover { background: color-mix(in srgb, var(--accent) 18%, transparent); }
+.desktop-dock-meta { margin-top: 7px; font-size: 7px; letter-spacing: 0.13em; opacity: 0.42; }
+.desktop-dock-meta span + span { border-left: 1px solid currentColor; padding-left: 8px; }
+
+.desktop-settings {
+  position: fixed;
+  right: 28px;
+  bottom: 151px;
+  z-index: 13;
+  width: min(430px, calc(100vw - 56px));
+  padding: 17px;
+  border: 1px solid color-mix(in srgb, var(--accent) 34%, transparent);
+  background: rgba(2, 11, 16, 0.96);
+  box-shadow: 0 22px 70px rgba(0, 0, 0, 0.6), 0 0 34px color-mix(in srgb, var(--accent) 14%, transparent);
+  backdrop-filter: blur(18px);
+  pointer-events: auto;
+  text-transform: uppercase;
+}
+.desktop-settings-head { display: flex; justify-content: space-between; align-items: flex-start; }
+.desktop-settings-kicker { display: block; color: var(--accent); opacity: 0.6; font-size: 8px; letter-spacing: 0.22em; }
+.desktop-settings h2 { margin: 5px 0 16px; color: #effcff; font-size: 20px; font-weight: 300; letter-spacing: 0.08em; text-transform: none; }
+.desktop-close { font-size: 24px; opacity: 0.7; }
+.desktop-permission-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; margin-bottom: 12px; }
+.desktop-permission { display: flex; align-items: center; gap: 6px; padding: 7px 8px; border: 1px solid color-mix(in srgb, var(--accent) 15%, transparent); font-size: 8px; letter-spacing: 0.13em; opacity: 0.48; }
+.desktop-permission.active { color: #62ffc8; border-color: rgba(98, 255, 200, 0.24); opacity: 0.9; }
+.desktop-permission span { width: 5px; height: 5px; border-radius: 50%; background: currentColor; box-shadow: 0 0 7px currentColor; }
+.desktop-toggle { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; border-top: 1px solid color-mix(in srgb, var(--accent) 12%, transparent); cursor: pointer; }
+.desktop-toggle span { display: flex; flex-direction: column; gap: 4px; }
+.desktop-toggle b { color: #eafcff; font-size: 10px; font-weight: 400; letter-spacing: 0.1em; }
+.desktop-toggle small { color: #b8d3d6; font-size: 10px; opacity: 0.48; letter-spacing: 0; text-transform: none; }
+.desktop-toggle input { appearance: none; width: 29px; height: 15px; flex: 0 0 auto; border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent); border-radius: 10px; background: transparent; cursor: pointer; }
+.desktop-toggle input::after { content: ''; display: block; width: 9px; height: 9px; margin: 2px; border-radius: 50%; background: color-mix(in srgb, var(--accent) 45%, transparent); transition: transform 150ms ease, background 150ms ease; }
+.desktop-toggle input:checked::after { transform: translateX(14px); background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+.desktop-settings-foot { justify-content: space-between; margin-top: 12px; padding-top: 11px; border-top: 1px solid color-mix(in srgb, var(--accent) 12%, transparent); font-size: 7px; letter-spacing: 0.08em; opacity: 0.65; }
+.desktop-settings-foot button { font-size: 7px; }
+
+@media (max-width: 900px) {
+  .desktop-dock { right: 16px; bottom: 14px; width: calc(100vw - 32px); }
+  .desktop-settings { right: 16px; bottom: 136px; width: calc(100vw - 32px); }
+  .desktop-dock-meta { font-size: 6px; }
+}
+
 /* The live camera inside a blade. Mirrored, because a person expects their own
    image to behave like a reflection — the frames sent to the model are not. */
 .bl-camera {

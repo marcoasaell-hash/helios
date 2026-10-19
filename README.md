@@ -1,10 +1,16 @@
 # J.A.R.V.I.S.
 
-A browser voice assistant with an Iron Man holographic interface. Say
-**"Hey Jarvis"**, he wakes, listens, and does real things through your tools —
-searches the web, generates images, drives your phone, reads your mail. The face
-is a web page (React + Vite + Three.js + custom GLSL). The brain is Claude Code,
-run headless as a library.
+A Windows desktop agent with an Iron Man-inspired holographic interface. Say
+**"Hey Jarvis"**, he wakes, listens, and can operate the local desktop — open
+apps, read/write/search files, launch pages, use a signed-in browser, generate
+images through your configured providers, and remember conversations locally.
+The face is React + Vite + Three.js. The brain is Claude Code, run headless as
+a local bridge inside an Electron desktop shell.
+
+The boot sequence and reactor language take their starting point from the
+referenced `adewaskar/jarvis` project. The desktop controls, local tools,
+browser profile, memory layer, tray behavior, and command dock are built for
+this app.
 
 **The only subscription you need is Claude Code.** No API keys, no OpenAI
 account, no cloud bill — the brain runs on your existing Claude Code login, and
@@ -41,6 +47,54 @@ language.
 ---
 
 ## Quick start
+
+### Desktop app (Windows)
+
+Install dependencies and start the native app:
+
+```bash
+npm install
+npm run desktop
+```
+
+The app starts the bridge automatically, places JARVIS in the system tray, and
+keeps listening when the window is hidden. Press **Alt+Space** to show or hide
+it. The command dock accepts typed commands as well as voice commands.
+
+To run the built renderer in the native shell:
+
+```bash
+npm run desktop:prod
+```
+
+Desktop mode enables the local action tools, including file writes and app
+launching. Deletion and outward-facing browser actions are described aloud
+before they run. The settings panel exposes tray behavior, Windows startup, and
+local memory.
+
+### Voice
+
+The requested ElevenLabs voice is configured as:
+
+```text
+Iqh4r3CPhQwBblCkKe0a
+```
+
+Add `ELEVENLABS_API_KEY` to the environment that launches the app, or to the
+ElevenLabs MCP server in `~/.claude.json`. Without a key, the app falls back to
+the installed Windows voice and still works.
+
+### Gmail and WhatsApp
+
+Desktop mode includes a local Chrome/Edge DevTools browser profile for signed-in
+web services. The first time JARVIS needs Gmail or WhatsApp Web, it opens that
+profile; sign in once, then ask him to read, search, draft, or reply. The agent
+reads the page before acting and only sends browser messages when desktop write
+access is enabled.
+
+The profile is stored below the JARVIS data folder, which can be opened from the
+settings panel. This keeps its session separate from your everyday browser
+profile.
 
 First, install, then start it:
 
@@ -233,6 +287,8 @@ Everything is optional in bridge mode. Frontend settings live in `.env.local`
 | `JARVIS_FILE_ROOTS` | — | Roots the `/file` endpoint may serve from |
 | `JARVIS_VOICE_ID` | — | ElevenLabs voice id |
 | `ELEVENLABS_API_KEY` | — | Optional; enables the ElevenLabs voice + Scribe |
+| `JARVIS_MEMORY_ENABLED` | `1` | Persist searchable conversations locally |
+| `JARVIS_BROWSER_DEBUG_PORT` | `9222` | Local Chrome/Edge DevTools port |
 
 ### Frontend (`.env.local`)
 
