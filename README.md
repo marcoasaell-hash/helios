@@ -236,7 +236,7 @@ bridge also reads from `.env.local` (shell values win).
 | `ELEVENLABS_API_KEY` | — | Optional; enables the ElevenLabs voice + Scribe |
 | `FISH_API_KEY` | — | Optional; speaks with Fish Audio instead of ElevenLabs |
 | `FISH_VOICE_ID` | `14129c3e…` | Fish Audio voice model (`reference_id`) |
-| `FISH_MODEL` | `s2.1-pro` | Fish speech model. The default is **paid** (billed per UTF-8 byte); set `s2.1-pro-free` for free usage |
+| `FISH_MODEL` | `s2.1-pro-free` | Fish speech model. The default is free; `s2.1-pro` and the others are **paid** (billed per UTF-8 byte) |
 
 ### Frontend (`.env.local`)
 
@@ -264,8 +264,8 @@ the next boot, and both the voice and transcription upgrade automatically.
 
 Run `powershell -ExecutionPolicy Bypass -File scripts\set-fish-key.ps1` (or add
 `FISH_API_KEY=` to `.env.local` by hand) and restart the bridge. Fish then takes
-over the voice. The default model, `s2.1-pro`, is billed per character spoken;
-add `FISH_MODEL=s2.1-pro-free` to `.env.local` to use Fish's free tier instead.
+over the voice on Fish's free tier (`s2.1-pro-free`). Setting `FISH_MODEL` to a
+paid model such as `s2.1-pro` is billed per character spoken.
 Transcription still uses Scribe if an ElevenLabs key is present,
 otherwise the browser recogniser. The key stays in the bridge and never reaches
 the browser.

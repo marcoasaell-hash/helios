@@ -493,7 +493,9 @@ const VOICE_ID = process.env.JARVIS_VOICE_ID ?? 'JBFqnCBsd6RMkjVDRZzb'
 const fishKey = () => process.env.FISH_API_KEY || null
 const FISH_VOICE_ID =
   process.env.FISH_VOICE_ID ?? '14129c3e320149449d6bada6862f7338'
-const FISH_MODEL = process.env.FISH_MODEL ?? 's2.1-pro'
+// The free tier by default: a paid model has to be chosen on purpose. `||`,
+// not `??` — Fish bills an empty or unknown model name as s2.1-pro.
+const FISH_MODEL = process.env.FISH_MODEL || 's2.1-pro-free'
 
 /** Which cloud voice /tts will use, or null for the browser's own. */
 const ttsProvider = () =>
