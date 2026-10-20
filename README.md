@@ -218,7 +218,8 @@ then the triangular arc reactor lighting up — with a start-up sound under it
 ## Configuration
 
 Everything is optional in bridge mode. Frontend settings live in `.env.local`
-(copy `.env.example`); bridge settings are environment variables.
+(copy `.env.example`); bridge settings are environment variables, which the
+bridge also reads from `.env.local` (shell values win).
 
 ### Bridge
 
@@ -233,6 +234,9 @@ Everything is optional in bridge mode. Frontend settings live in `.env.local`
 | `JARVIS_FILE_ROOTS` | — | Roots the `/file` endpoint may serve from |
 | `JARVIS_VOICE_ID` | — | ElevenLabs voice id |
 | `ELEVENLABS_API_KEY` | — | Optional; enables the ElevenLabs voice + Scribe |
+| `FISH_API_KEY` | — | Optional; speaks with Fish Audio instead of ElevenLabs |
+| `FISH_VOICE_ID` | `14129c3e…` | Fish Audio voice model (`reference_id`) |
+| `FISH_MODEL` | `s2.1-pro` | Fish speech model (`s2.1-pro-free` for the free tier) |
 
 ### Frontend (`.env.local`)
 
@@ -255,6 +259,14 @@ You do not have to touch a flag. Either:
 
 Either way, `/health` starts reporting the capability, the browser picks it up on
 the next boot, and both the voice and transcription upgrade automatically.
+
+### Adding a Fish Audio voice
+
+Run `powershell -ExecutionPolicy Bypass -File scripts\set-fish-key.ps1` (or add
+`FISH_API_KEY=` to `.env.local` by hand) and restart the bridge. Fish then takes
+over the voice; transcription still uses Scribe if an ElevenLabs key is present,
+otherwise the browser recogniser. The key stays in the bridge and never reaches
+the browser.
 
 ---
 
