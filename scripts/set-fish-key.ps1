@@ -30,3 +30,4 @@ if (-not ($lines | Where-Object { $_ -match '^\s*FISH_VOICE_ID\s*=' })) {
 $key = $null
 
 Write-Host "Saved FISH_API_KEY to .env.local (length hidden). Restart JARVIS to use it."
+Write-Host 'Note: the default model (s2.1-pro) is paid. Add FISH_MODEL=s2.1-pro-free to .env.local for the free tier.'

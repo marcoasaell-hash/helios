@@ -36,9 +36,19 @@ import { probeUrl, renderPage } from './page.mjs'
  * may hold keys. Vite reads the same file but only ever exposes VITE_ names to
  * the browser, so an unprefixed key never reaches the bundle. Values already in
  * the shell win; a missing file is fine.
+ *
+ * Parsed here rather than with process.loadEnvFile, which only exists from
+ * Node 20.12 — package.json still allows 20.0, where it would silently do
+ * nothing and the key would never load.
  */
 try {
-  process.loadEnvFile(new URL('../.env.local', import.meta.url))
+  const envText = readFileSync(new URL('../.env.local', import.meta.url), 'utf8')
+  for (const line of envText.split(/\r?\n/)) {
+    const m = line.match(/^\s*(?:export\s+)?([\w.-]+)\s*=\s*(.*?)\s*$/)
+    if (!m || m[1] in process.env) continue
+    const quoted = m[2].match(/^(['"`])(.*)\1$/)
+    process.env[m[1]] = quoted ? quoted[2] : m[2].replace(/\s+#.*$/, '')
+  }
 } catch {
   /* no .env.local — shell environment only */
 }
