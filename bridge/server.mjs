@@ -493,9 +493,18 @@ const VOICE_ID = process.env.JARVIS_VOICE_ID ?? 'JBFqnCBsd6RMkjVDRZzb'
 const fishKey = () => process.env.FISH_API_KEY || null
 const FISH_VOICE_ID =
   process.env.FISH_VOICE_ID ?? '14129c3e320149449d6bada6862f7338'
-// The free tier by default: a paid model has to be chosen on purpose. `||`,
-// not `??` — Fish bills an empty or unknown model name as s2.1-pro.
-const FISH_MODEL = process.env.FISH_MODEL || 's2.1-pro-free'
+// The free tier by default: a paid model has to be chosen on purpose. Fish
+// bills an empty or unknown model name as s2.1-pro, so anything that is not a
+// known id — blank, whitespace, a typo — falls back to free, with a warning.
+const FISH_MODELS = ['s2.1-pro-free', 's2.1-pro', 's2-pro', 's1', 'drama-3']
+const FISH_MODEL = (() => {
+  const want = (process.env.FISH_MODEL ?? '').trim()
+  if (FISH_MODELS.includes(want)) return want
+  if (want) {
+    console.warn(`[jarvis] unknown FISH_MODEL "${want}" — using s2.1-pro-free`)
+  }
+  return 's2.1-pro-free'
+})()
 
 /** Which cloud voice /tts will use, or null for the browser's own. */
 const ttsProvider = () =>
@@ -953,6 +962,9 @@ const handleRequest = async (req, res) => {
       for await (const chunk of upstream.body) res.write(Buffer.from(chunk))
       return res.end()
     } catch (err) {
+      // Mid-stream failure: the 200 is already out, so cut the connection —
+      // the browser's fetch then rejects and it falls back to its own voice.
+      if (res.headersSent) return res.destroy()
       res.writeHead(502, cors)
       return res.end(String(err?.message ?? err))
     }
