@@ -491,8 +491,9 @@ const VOICE_ID = process.env.JARVIS_VOICE_ID ?? 'JBFqnCBsd6RMkjVDRZzb'
  * `reference_id`, and FISH_MODEL as its `model` header.
  */
 const fishKey = () => process.env.FISH_API_KEY || null
+// Blank counts as unset: an empty reference_id would not pick the default.
 const FISH_VOICE_ID =
-  process.env.FISH_VOICE_ID ?? '14129c3e320149449d6bada6862f7338'
+  process.env.FISH_VOICE_ID?.trim() || '14129c3e320149449d6bada6862f7338'
 // The free tier by default: a paid model has to be chosen on purpose. Fish
 // bills an empty or unknown model name as s2.1-pro, so anything that is not a
 // known id — blank, whitespace, a typo — falls back to free, with a warning.
