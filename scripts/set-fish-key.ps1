@@ -19,10 +19,10 @@ if (-not $key) { Write-Host 'No key entered; nothing changed.'; exit 1 }
 
 $lines = @()
 if (Test-Path $envFile) {
-  $lines = @(Get-Content $envFile | Where-Object { $_ -notmatch '^\s*FISH_API_KEY\s*=' })
+  $lines = @(Get-Content $envFile | Where-Object { $_ -notmatch '^\s*(export\s+)?FISH_API_KEY\s*=' })
 }
 $lines += "FISH_API_KEY=$key"
-if (-not ($lines | Where-Object { $_ -match '^\s*FISH_VOICE_ID\s*=' })) {
+if (-not ($lines | Where-Object { $_ -match '^\s*(export\s+)?FISH_VOICE_ID\s*=' })) {
   $lines += 'FISH_VOICE_ID=14129c3e320149449d6bada6862f7338'
 }
 # UTF-8 without a BOM: Node's env-file parser would read a BOM into the first name.

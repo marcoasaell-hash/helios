@@ -513,6 +513,9 @@ export default function App() {
     // first turn already uses ElevenLabs when a key is present and the browser
     // fallback when it is not — no flag, no reload.
     await probeCapabilities()
+    // Again now that the probe has run: the label above was set before the
+    // bridge said which cloud voice it has, so it named the browser's voice.
+    store.getState().setVoice(currentVoiceName())
 
     // One voice loop, started once, running until the page closes.
     voice.current = await startVoice({

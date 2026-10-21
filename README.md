@@ -263,7 +263,7 @@ the next boot, and both the voice and transcription upgrade automatically.
 ### Adding a Fish Audio voice
 
 Run `powershell -ExecutionPolicy Bypass -File scripts\set-fish-key.ps1` (or add
-`FISH_API_KEY=` to `.env.local` by hand) and restart the bridge. Fish then takes
+`FISH_API_KEY=<your key>` to `.env.local` by hand) and restart the bridge. Fish then takes
 over the voice on Fish's free tier (`s2.1-pro-free`). Setting `FISH_MODEL` to a
 paid model such as `s2.1-pro` is billed per character spoken.
 Transcription still uses Scribe if an ElevenLabs key is present,
